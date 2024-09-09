@@ -94,6 +94,15 @@ fn run_perf_test(read_perc: i32) {
             keys.clone(),
         ));
 
+        let ev = Arc::new(NopCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        measurements.push(bench::run_workload2(
+            &"nop",
+            ev,
+            mix.clone(),
+            config,
+            keys.clone(),
+        ));
+
         //let std = Arc::new(StdHashMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
         //measurements.push(bench::run_workload2(&"std", std,mix.clone(), config, keys.clone()));
     }
@@ -138,6 +147,7 @@ pub fn plot(
     color_map.insert("c#", RED);
     color_map.insert("ev", GREEN);
     color_map.insert("scc", MAGENTA);
+    color_map.insert("nop", CYAN);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);
