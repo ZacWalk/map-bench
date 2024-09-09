@@ -83,9 +83,15 @@ where
         self.keys[i % allocated]
     }
 
-    pub fn alloc(&self) -> TK {
-        let i = self.allocated.fetch_add(1, Ordering::Relaxed) + 1;
-        self.keys[i - 1]
+    // too slow
+    // pub fn alloc(&self) -> TK {
+    //     let i = self.allocated.fetch_add(1, Ordering::Relaxed);
+    //     self.keys[i]
+    // }
+
+    pub fn alloc_n(&self, count : usize) -> &[TK] {
+        let i = self.allocated.fetch_add(count, Ordering::Relaxed);
+        &self.keys[i..(i + count)] 
     }
 }
 
@@ -154,17 +160,19 @@ fn run_ops<H: CollectionHandle>(
     keys: &Arc<Keys<H::Key>>,
     op_mix: &[Operation],
     ops_per_thread: usize,
+    keys_needed_per_thread : usize,
 ) -> usize {
     let mut rng = thread_rng();
     let op_mix_count = op_mix.len();
     let mut total_success = 0;
+    let mut new_keys = keys.alloc_n(keys_needed_per_thread).iter().cycle();
 
     for i in 0..ops_per_thread {
         let op = op_mix[i % op_mix_count];
         let r = rng.gen::<usize>(); // Generate a random usize
         let success = match op {
             Operation::Read => dict.get(&keys.random(r)),
-            Operation::Insert => dict.insert(keys.alloc()),
+            Operation::Insert => dict.insert(*new_keys.next().unwrap()),
             Operation::Remove => dict.remove(&keys.random(r)),
             Operation::Update => {
                 dict.update(&keys.random(r))
@@ -188,12 +196,13 @@ fn run_ops<H: CollectionHandle>(
     total_success
 }
 
-pub fn run_workload2<H: Collection>(
+pub fn run_workload<H: Collection>(
     name : &'static str,
     collection: Arc<H>,
     operations: Vec<Operation>,
     config: RunConfig,
     keys: Arc<Keys<<<H as Collection>::Handle as CollectionHandle>::Key>>,
+    keys_needed_per_thread : usize,
 ) -> Measurement {
     let num_threads = config.threads;
 
@@ -207,14 +216,15 @@ pub fn run_workload2<H: Collection>(
     println!("prefill {}", config.prefill);
 
     keys.reset();
+    let mut new_keys = keys.alloc_n(config.prefill).iter().cycle();
     let inserter = collection.pin();
     for _ in 0..config.prefill {
-        inserter.insert(keys.alloc());
+        inserter.insert(*new_keys.next().unwrap());
     }
 
     collection.prefill_complete();
 
-    let core_ids = get_core_ids().expect("Failed to get core IDs");
+    //let core_ids = get_core_ids().expect("Failed to get core IDs");
 
     for n in 0..num_threads {        
         let operations = operations.clone();
@@ -222,11 +232,11 @@ pub fn run_workload2<H: Collection>(
         let total_milliseconds = total_milliseconds.clone();
         let collection = collection.clone();
         let keys = keys.clone();
-        let core_id = core_ids[n % core_ids.len()];
-        let core_id_usize = core_id.id as usize;
+        //let core_id = core_ids[n % core_ids.len()];
+        //let core_id_usize = core_id.id as usize;
 
         let handle = thread::spawn(move || {
-            set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
+            // set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
             let dict = collection.pin();
             barrier.wait();
             let start = Instant::now();
@@ -235,6 +245,7 @@ pub fn run_workload2<H: Collection>(
                 &keys,
                 &operations,
                 ops_per_thread,
+                keys_needed_per_thread
             );
             let elapsed_ms = start.elapsed().as_millis() as usize;
             total_milliseconds.fetch_add(elapsed_ms, Ordering::Relaxed);

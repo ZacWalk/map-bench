@@ -15,8 +15,8 @@ mod bench;
 
 use crate::adapters::*;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+//#[global_allocator]
+//static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
     run_perf_test(95);
@@ -34,7 +34,9 @@ fn run_perf_test(read_perc: i32) {
     let capacity = 1_000_000;
     let total_ops = capacity * 55;
     let prefill = capacity / 2;
-    let total_keys = prefill + (total_ops * spec.insert / 100) + 1000;
+    let keys_needed_for_inserts = (total_ops * spec.insert / 100) + 1; 
+    let total_keys = prefill + keys_needed_for_inserts + 1000; // 1000 needed for some rounding error?
+    
 
     let mut measurements = if read_perc == 100 {
         Vec::new()
@@ -69,41 +71,47 @@ fn run_perf_test(read_perc: i32) {
             prefill,
         };
 
+        let keys_needed_per_thread = keys_needed_for_inserts / config.threads;
+
         let scc = Arc::new(SccCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
-        measurements.push(bench::run_workload2(
+        measurements.push(bench::run_workload(
             &"scc",
             scc,
             mix.clone(),
             config,
             keys.clone(),
+            keys_needed_per_thread,
         ));
 
         let bfix =
             Arc::new(BFixCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
-        measurements.push(bench::run_workload2(
+        measurements.push(bench::run_workload(
             &"bfix",
             bfix,
             mix.clone(),
             config,
             keys.clone(),
+            keys_needed_per_thread,
         ));
 
         let ev = Arc::new(EvMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
-        measurements.push(bench::run_workload2(
+        measurements.push(bench::run_workload(
             &"ev",
             ev,
             mix.clone(),
             config,
             keys.clone(),
+            keys_needed_per_thread,
         ));
 
         let ev = Arc::new(NopCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
-        measurements.push(bench::run_workload2(
+        measurements.push(bench::run_workload(
             &"nop",
             ev,
             mix.clone(),
             config,
             keys.clone(),
+            keys_needed_per_thread,
         ));
 
         //let std = Arc::new(StdHashMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
