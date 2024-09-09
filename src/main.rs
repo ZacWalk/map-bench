@@ -8,6 +8,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Arc;
+use std::collections::BTreeMap;
 
 mod adapters;
 mod bench;
@@ -30,7 +31,7 @@ fn run_perf_test(read_perc: i32) {
     let capacity = 1_000_000;
     let total_ops = capacity * 55;
     let prefill = capacity / 2;
-    let total_keys = prefill + (total_ops * spec.insert / 100) + 100;
+    let total_keys = prefill + (total_ops * spec.insert / 100) + 1000;
 
     let mut measurements = if read_perc == 100 {
         Vec::new()
@@ -118,7 +119,7 @@ fn run_perf_test(read_perc: i32) {
     .expect("failed to plot");
 }
 
-type Groups = HashMap<&'static str, Vec<bench::Measurement>>;
+type Groups = BTreeMap<&'static str, Vec<bench::Measurement>>;
 
 static COLORS: &[RGBColor] = &[BLUE, RED, GREEN, MAGENTA, CYAN, BLACK, YELLOW];
 const FONT: &str = "Fira Code";
@@ -131,6 +132,12 @@ pub fn plot(
     path: &str,
 ) -> Result<(), Box<dyn Error>> {
     let mut groups = Groups::new();
+
+    let mut color_map = HashMap::new();
+    color_map.insert("bfix", BLUE);
+    color_map.insert("c#", RED);
+    color_map.insert("ev", GREEN);
+    color_map.insert("scc", MAGENTA);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);
@@ -167,9 +174,9 @@ pub fn plot(
         .x_desc("Threads")
         .draw()?;
 
-    let colors = COLORS.iter().cycle();
-
-    for (records, color) in groups.values().zip(colors) {
+    
+    for records in groups.values() {
+        let color = color_map.get(records[0].name).unwrap(); 
         chart
             .draw_series(LineSeries::new(
                 records

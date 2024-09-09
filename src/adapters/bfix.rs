@@ -136,7 +136,7 @@ type BFixLock<T> = parking_lot::RwLock<T>;
 //type BFixLock<T> = BitLock<T>;
 
 
-const SLOT_BITS: usize = 9;
+const SLOT_BITS: usize = 8;
 const SLOT_COUNT: usize = 1 << SLOT_BITS;
 const SLOT_MASK: u64 = (SLOT_COUNT - 1) as u64;
 

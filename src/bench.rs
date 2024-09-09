@@ -9,9 +9,6 @@ use std::sync::{
 use std::thread;
 use std::time::Instant;
 
-type KeyType = u64;
-type ValueType = u64;
-
 /// A collection that can be benchmarked by bustle.
 ///
 /// Any thread that performs operations on the collection will first call `pin` and then perform
