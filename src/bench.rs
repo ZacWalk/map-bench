@@ -1,37 +1,111 @@
-use affinity::set_thread_affinity;
-use core_affinity::get_core_ids;
-use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use rand::RngCore;
-use rand::SeedableRng;
-use std::sync::Barrier;
-use std::{sync::Arc, time::Duration};
+use rand::Rng;
+use std::collections::HashSet;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Barrier,
+};
+use std::thread;
+use std::time::Instant;
 
-#[derive(Debug, Clone)]
+type KeyType = u64;
+type ValueType = u64;
+
+/// A collection that can be benchmarked by bustle.
+///
+/// Any thread that performs operations on the collection will first call `pin` and then perform
+/// collection operations on the `Handle` that is returned. `pin` will not be called in the hot
+/// loop of the benchmark.
+pub trait Collection: Send + Sync + 'static {
+    type Handle: CollectionHandle;
+    fn pin(&self) -> Self::Handle;
+    fn prefill_complete(&self);
+}
+
+/// A handle to a key-value collection.
+///
+/// Note that for all these methods, the benchmarker does not dictate what the values are. Feel
+/// free to use the same value for all operations, or use distinct ones and check that your
+/// retrievals indeed return the right results.
+pub trait CollectionHandle {
+    type Key: From<u64> + Clone + Send + Sync + Copy;
+
+    fn get(&self, key: &Self::Key) -> bool;
+    fn insert(&self, key: Self::Key) -> bool;
+    fn remove(&self, key: &Self::Key) -> bool;
+    fn update(&self, key: &Self::Key) -> bool;
+}
+
+#[derive(Debug, Clone, Copy)] // Add these derives if needed for convenience
 pub struct Measurement {
+    pub name : &'static str,
+
     /// A total number of operations.
-    pub total_ops: u64,
-    /// Spent time.
-    pub spent: Duration,
-    /// A number of operations per second.
-    pub throughput: f64,
+    pub total_ops: u64, // Using u64 as it's likely non-negative
+
     /// An average value of latency.
-    pub latency: Duration,
+    pub latency: u64, // Using u64 assuming latency is non-negative
+
+    /// A total number of threads.
+    pub thread_count: u64, // Using u64 as thread count is non-negative
+}
+
+#[derive(Clone)] // Allow cloning if needed
+pub struct Keys<TK: From<u64> + Clone + Send + Sync> {
+    allocated: Arc<AtomicUsize>,
+    keys: Vec<TK>,
+}
+
+impl<TK> Keys<TK>
+where
+    TK: Send + Sync + From<u64> + Copy + Clone,
+{
+    pub fn new(total_keys: usize) -> Self {
+        let mut rng = rand::thread_rng();
+        let mut unique_set = HashSet::new();
+
+        while unique_set.len() < total_keys {
+            unique_set.insert(rng.gen::<u64>());
+        }
+
+        Self {
+            allocated: Arc::new(AtomicUsize::new(0)),
+            keys: unique_set.into_iter().map(TK::from).collect(),
+        }
+    }
+
+    pub fn reset(&self) {
+        self.allocated.store(0, Ordering::Relaxed);
+    }
+
+    pub fn random(&self, i: usize) -> TK {
+        let allocated = self.allocated.load(Ordering::Relaxed);
+        self.keys[i % allocated]
+    }
+
+    pub fn alloc(&self) -> TK {
+        let i = self.allocated.fetch_add(1, Ordering::Relaxed) + 1;
+        self.keys[i - 1]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operation {
+    Read,
+    Insert,
+    Remove,
+    Update,
+    Upsert,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Mix {
-    /// The percentage of operations in the mix that are reads.
-    pub read: u8,
-    /// The percentage of operations in the mix that are inserts.
-    pub insert: u8,
-    /// The percentage of operations in the mix that are removals.
-    pub remove: u8,
-    /// The percentage of operations in the mix that are updates.
-    pub update: u8,
-    /// The percentage of operations in the mix that are update-or-inserts.
-    pub upsert: u8,
+    pub read: usize,
+    pub insert: usize,
+    pub remove: usize,
+    pub update: usize,
+    pub upsert: usize,
 }
 
 impl Mix {
@@ -46,6 +120,7 @@ impl Mix {
         }
     }
 
+    /// Constructs a read-only workload.
     pub fn read_only() -> Self {
         Self {
             read: 100,
@@ -55,363 +130,133 @@ impl Mix {
             upsert: 0,
         }
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-pub struct Workload {
-    /// The initial capacity of the table, specified as a power of 2.
-    initial_cap_log2: u8,
-
-    /// The fraction of the initial table capacity should we populate before running the benchmark.
-    prefill_f: f64,
-
-    /// Total number of operations as a multiple of the initial capacity.
-    ops_f: f64,
-
-    /// Number of threads to run the benchmark with.
-    threads: usize,
-}
-
-impl Workload {
-    /// Start building a new benchmark workload.
-    pub fn new(threads: usize) -> Self {
-        Self {
-            initial_cap_log2: 25,
-            prefill_f: 0.0,
-            ops_f: 0.75,
-            threads,
-        }
+    // Assuming 'Operation' enum is defined similarly to the previous examples
+    pub fn to_ops(&self) -> Vec<Operation> {
+        let mut list = Vec::with_capacity(100);
+        list.extend(std::iter::repeat(Operation::Read).take(self.read as usize));
+        list.extend(std::iter::repeat(Operation::Insert).take(self.insert as usize));
+        list.extend(std::iter::repeat(Operation::Remove).take(self.remove as usize));
+        list.extend(std::iter::repeat(Operation::Update).take(self.update as usize));
+        list.extend(std::iter::repeat(Operation::Upsert).take(self.upsert as usize));
+        list.shuffle(&mut rand::thread_rng());
+        list
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Operation {
-    Read,
-    Insert,
-    Remove,
-    Update,
-    Upsert,
+#[derive(Debug, Clone, Copy)] // Add these derives for convenience if needed
+pub struct RunConfig {
+    pub threads: usize,
+    pub total_ops: usize,
+    pub prefill: usize,
 }
-
-/// A collection that can be benchmarked by bustle.
-///
-/// Any thread that performs operations on the collection will first call `pin` and then perform
-/// collection operations on the `Handle` that is returned. `pin` will not be called in the hot
-/// loop of the benchmark.
-pub trait Collection: Send + Sync + 'static {
-    /// A thread-local handle to the concurrent collection under test.
-    type Handle: CollectionHandle;
-
-    /// Allocate a new instance of the benchmark target with the given capacity.
-    fn with_capacity(capacity: usize) -> Self;
-
-    /// Pin a thread-local handle to the concurrent collection under test.
-    fn pin(&self) -> Self::Handle;
-}
-
-/// A handle to a key-value collection.
-///
-/// Note that for all these methods, the benchmarker does not dictate what the values are. Feel
-/// free to use the same value for all operations, or use distinct ones and check that your
-/// retrievals indeed return the right results.
-pub trait CollectionHandle {
-    /// The `u64` seeds used to construct `Key` (through `From<u64>`) are distinct.
-    /// The returned keys must be as well.
-    type Key: From<u64> + Clone;
-
-    /// Perform a lookup for `key`.
-    ///
-    /// Should return `true` if the key is found.
-    fn get(&mut self, key: &Self::Key) -> bool;
-
-    /// Insert `key` into the collection.
-    ///
-    /// Should return `true` if no value previously existed for the key.
-    fn insert(&mut self, key: Self::Key) -> bool;
-
-    /// Remove `key` from the collection.
-    ///
-    /// Should return `true` if the key existed and was removed.
-    fn remove(&mut self, key: &Self::Key) -> bool;
-
-    /// Update the value for `key` in the collection, if it exists.
-    ///
-    /// Should return `true` if the key existed and was updated.
-    ///
-    /// Should **not** insert the key if it did not exist.
-    fn update(&mut self, key: &Self::Key) -> bool;
-}
-
-fn run_thread<H: CollectionHandle>(
-    tbl: &mut H,
-    keys: &[H::Key],
+fn run_ops<H: CollectionHandle>(
+    dict: &H, // Assuming you have a ConcurrentDictionary type
+    keys: &Arc<Keys<H::Key>>,
     op_mix: &[Operation],
-    ops: usize,
-    prefilled: usize,
-    barrier: Arc<Barrier>,
-    run_checks: bool,
-) where
-    H::Key: std::fmt::Debug,
-{
-    // Invariant: erase_seq <= insert_seq
-    // Invariant: insert_seq < numkeys
-    let nkeys = keys.len();
-    let mut erase_seq = 0;
-    let mut insert_seq = prefilled;
-    let mut find_seq = 0;
+    ops_per_thread: usize,
+) -> usize {
+    let mut rng = thread_rng();
+    let op_mix_count = op_mix.len();
+    let mut total_success = 0;
 
-    // We're going to use a very simple LCG to pick random keys.
-    // We want it to be _super_ fast so it doesn't add any overhead.
-    assert!(nkeys.is_power_of_two());
-    assert!(nkeys > 4);
-    assert_eq!(op_mix.len(), 100);
-    let a = nkeys / 2 + 1;
-    let c = nkeys / 4 - 1;
-    let find_seq_mask = nkeys - 1;
-
-    // The elapsed time is measured by the lifetime of `workload_scope`.
-    let workload_scope = scopeguard::guard(barrier, |barrier| {
-        barrier.wait();
-    });
-    workload_scope.wait();
-
-    for (i, op) in (0..((ops + op_mix.len() - 1) / op_mix.len()))
-        .flat_map(|_| op_mix.iter())
-        .enumerate()
-    {
-        if i == ops {
-            break;
-        }
-
-        match op {
-            Operation::Read => {
-                let should_find = find_seq >= erase_seq && find_seq < insert_seq;
-                let found = tbl.get(&keys[find_seq]);
-                if find_seq >= erase_seq {
-                    assert_eq!(
-                        should_find, found,
-                        "get({:?}) {} {} {}",
-                        &keys[find_seq], find_seq, erase_seq, insert_seq
-                    );
-                } else {
-                    // due to upserts, we may _or may not_ find the key
-                }
-
-                // Twist the LCG since we used find_seq
-                find_seq = (a * find_seq + c) & find_seq_mask;
-            }
-            Operation::Insert => {
-                let new_key = tbl.insert(keys[insert_seq].clone());
-
-                if run_checks {
-                    assert!(
-                        new_key,
-                        "insert({:?}) should insert a new value",
-                        &keys[insert_seq]
-                    );
-                }
-                insert_seq += 1;
-            }
-            Operation::Remove => {
-                if erase_seq == insert_seq {
-                    // If `erase_seq` == `insert_eq`, the table should be empty.
-                    let removed = tbl.remove(&keys[find_seq]);
-
-                    if run_checks {
-                        assert!(
-                            !removed,
-                            "remove({:?}) succeeded on empty table",
-                            &keys[find_seq]
-                        );
-                    }
-
-                    // Twist the LCG since we used find_seq
-                    find_seq = (a * find_seq + c) & find_seq_mask;
-                } else {
-                    let removed = tbl.remove(&keys[erase_seq]);
-                    if run_checks {
-                        assert!(removed, "remove({:?}) should succeed", &keys[erase_seq]);
-                    }
-                    erase_seq += 1;
-                }
-            }
+    for i in 0..ops_per_thread {
+        let op = op_mix[i % op_mix_count];
+        let r = rng.gen::<usize>(); // Generate a random usize
+        let success = match op {
+            Operation::Read => dict.get(&keys.random(r)),
+            Operation::Insert => dict.insert(keys.alloc()),
+            Operation::Remove => dict.remove(&keys.random(r)),
             Operation::Update => {
-                // Same as find, except we update to the same default value
-                let should_exist = find_seq >= erase_seq && find_seq < insert_seq;
-                let updated = tbl.update(&keys[find_seq]);
-                if find_seq >= erase_seq {
-                    if run_checks {
-                        assert_eq!(should_exist, updated, "update({:?})", &keys[find_seq]);
-                    }
-                } else {
-                    // due to upserts, we may or may not have updated an existing key
-                }
-
-                // Twist the LCG since we used find_seq
-                find_seq = (a * find_seq + c) & find_seq_mask;
+                dict.update(&keys.random(r))
+                // if let Some(existing_value) = dict.get(&keys.random(r)) {
+                //     dict.insert(keys.random(r), existing_value + 1).is_some()
+                // } else {
+                //     false
+                // }
             }
             Operation::Upsert => {
-                // Pick a number from the full distribution, but cap it to the insert_seq, so we
-                // don't insert a number greater than insert_seq.
-                let n = std::cmp::min(find_seq, insert_seq);
-
-                // Twist the LCG since we used find_seq
-                find_seq = (a * find_seq + c) & find_seq_mask;
-
-                let _inserted = tbl.insert(keys[n].clone());
-                if n == insert_seq {
-                    insert_seq += 1;
-                }
+                // Note: Rust's `insert` always returns the old value, even if the key didn't exist before
+                //let old_value = dict.insert(keys.random(r), 1);
+                //old_value.is_none() || old_value.unwrap() == 0
+                dict.update(&keys.random(r))
             }
-        }
+        };
+
+        total_success += if success { 0 } else { 1 };
     }
+
+    total_success
 }
 
-pub fn run_workload<T: Collection>(
-    name: &str,
-    mix: Mix,
-    workload: Workload,
-    run_checks: bool,
-    thread_affinity: bool,
-) -> Measurement
-where
-    <T::Handle as CollectionHandle>::Key: Send + std::fmt::Debug,
-{
-    assert_eq!(
-        mix.read + mix.insert + mix.remove + mix.update + mix.upsert,
-        100,
-        "mix fractions do not add up to 100%"
-    );
+pub fn run_workload2<H: Collection>(
+    name : &'static str,
+    collection: Arc<H>,
+    operations: Vec<Operation>,
+    config: RunConfig,
+    keys: Arc<Keys<<<H as Collection>::Handle as CollectionHandle>::Key>>,
+) -> Measurement {
+    let num_threads = config.threads;
 
-    println!("============");
-    println!("workload start {} {} threads", name, workload.threads);
+    println!("start {} threads", num_threads);
 
-    let initial_capacity = 1 << workload.initial_cap_log2;
-    let total_ops = (initial_capacity as f64 * workload.ops_f) as usize;
+    let barrier = Arc::new(Barrier::new(num_threads + 1));
+    let mut thread_handles = Vec::with_capacity(num_threads);
+    let ops_per_thread = config.total_ops / num_threads;
+    let total_milliseconds = Arc::new(AtomicUsize::new(0));
 
-    let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
+    println!("prefill {}", config.prefill);
 
-    println!("generating operation mix");
-    let mut op_mix = Vec::with_capacity(100);
-    op_mix.append(&mut vec![Operation::Read; usize::from(mix.read)]);
-    op_mix.append(&mut vec![Operation::Insert; usize::from(mix.insert)]);
-    op_mix.append(&mut vec![Operation::Remove; usize::from(mix.remove)]);
-    op_mix.append(&mut vec![Operation::Update; usize::from(mix.update)]);
-    op_mix.append(&mut vec![Operation::Upsert; usize::from(mix.upsert)]);
-    op_mix.shuffle(&mut rng);
-
-    let prefill = (initial_capacity as f64 * workload.prefill_f) as usize;
-
-    // We won't be running through `op_mix` more than ceil(total_ops / 100), so calculate that
-    // ceiling and multiply by the number of inserts and upserts to get an upper bound on how
-    // many elements we'll be inserting.
-    let max_insert_ops = (total_ops + 99) / 100 * usize::from(mix.insert + mix.upsert);
-    let insert_keys = std::cmp::max(initial_capacity, max_insert_ops) + prefill;
-
-    println!("generating key space {}", insert_keys);
-
-    // Round this quantity up to a power of 2, so that we can use an LCG to cycle over the
-    // array "randomly".
-    let insert_keys_per_thread =
-        ((insert_keys + workload.threads - 1) / workload.threads).next_power_of_two();
-    let mut generators = Vec::new();
-    for _ in 0..workload.threads {
-        let mut thread_seed = [0u8; 32];
-        rng.fill_bytes(&mut thread_seed[..]);
-        generators.push(std::thread::spawn(move || {
-            let mut rng: rand::rngs::SmallRng = rand::SeedableRng::from_seed(thread_seed);
-            let mut keys: Vec<<T::Handle as CollectionHandle>::Key> =
-                Vec::with_capacity(insert_keys_per_thread);
-            keys.extend((0..insert_keys_per_thread).map(|_| rng.next_u64().into()));
-            keys
-        }));
+    keys.reset();
+    let inserter = collection.pin();
+    for _ in 0..config.prefill {
+        inserter.insert(keys.alloc());
     }
-    let keys: Vec<_> = generators
-        .into_iter()
-        .map(|jh| jh.join().unwrap())
-        .collect();
 
-    println!("constructing initial table");
-    let table = Arc::new(T::with_capacity(initial_capacity));
+    collection.prefill_complete();
 
-    // And fill it
-    let prefill_per_thread = prefill / workload.threads;
-    let mut prefillers = Vec::new();
-    for keys in keys {
-        let table = Arc::clone(&table);
-        prefillers.push(std::thread::spawn(move || {
-            let mut table = table.pin();
-            for key in &keys[0..prefill_per_thread] {
-                let inserted = table.insert(key.clone());
-                assert!(inserted);
-            }
-            keys
-        }));
-    }
-    let keys: Vec<_> = prefillers
-        .into_iter()
-        .map(|jh| jh.join().unwrap())
-        .collect();
+    for _ in 0..num_threads {        
+        let operations = operations.clone();
+        let barrier = barrier.clone();
+        let total_milliseconds = total_milliseconds.clone();
+        let collection = collection.clone();
+        let keys = keys.clone();
 
-    println!("start threads");
-
-    let core_ids = get_core_ids().expect("Failed to get core IDs");
-    let ops_per_thread = total_ops / workload.threads;
-    let op_mix = Arc::new(op_mix.into_boxed_slice());
-    let barrier = Arc::new(Barrier::new(workload.threads + 1));
-    let mut mix_threads = Vec::with_capacity(workload.threads);
-    let mut n = 0;
-
-    for keys in keys {
-        let table = Arc::clone(&table);
-        let op_mix = Arc::clone(&op_mix);
-        let barrier = Arc::clone(&barrier);
-        let core_id = core_ids[n % core_ids.len()];
-        let core_id_usize: usize = core_id.id;
-
-        mix_threads.push(std::thread::spawn(move || {
-            if thread_affinity {
-                set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
-            }
-
-            let mut table = table.pin();
-            run_thread(
-                &mut table,
+        let handle = thread::spawn(move || {
+            let dict = collection.pin();
+            barrier.wait();
+            let start = Instant::now();
+            run_ops(
+                &dict,
                 &keys,
-                &op_mix,
+                &operations,
                 ops_per_thread,
-                prefill_per_thread,
-                barrier,
-                run_checks,
-            )
-        }));
+            );
+            let elapsed_ms = start.elapsed().as_millis() as usize;
+            total_milliseconds.fetch_add(elapsed_ms, Ordering::Relaxed);
+        });
 
-        n += 1;
+        thread_handles.push(handle);
     }
 
     barrier.wait();
-    let start = std::time::Instant::now();
-    barrier.wait();
-    let spent = start.elapsed();
+    for handle in thread_handles {
+        handle.join().unwrap();
+    }
 
-    let _samples: Vec<_> = mix_threads
-        .into_iter()
-        .map(|jh| jh.join().unwrap())
-        .collect();
+    let total_milliseconds = total_milliseconds.load(Ordering::Relaxed);
+    let real_total_ops = ops_per_thread * num_threads;
+    let avg_latency = (total_milliseconds * 1_000_000) / real_total_ops;
 
-    let avg = spent / total_ops as u32;
     println!(
-        "workload complete in {:?} (ops: {}, avg: {:?})",
-        spent, total_ops, avg
+        "config complete in {} milliseconds (ops: {}, avg: {} ns)",
+        total_milliseconds, real_total_ops, avg_latency
     );
-
-    let total_ops = total_ops as u64;
-    let threads = workload.threads as u32;
 
     Measurement {
-        total_ops,
-        spent,
-        throughput: total_ops as f64 / spent.as_secs_f64(),
-        latency: Duration::from_nanos((spent * threads).as_nanos() as u64 / total_ops),
+        name,
+        total_ops: real_total_ops as u64,
+        latency: avg_latency as u64,
+        thread_count: num_threads as u64,
     }
 }

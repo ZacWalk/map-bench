@@ -17,7 +17,7 @@ impl EvMeta {
 }
 
 #[derive(Clone)]
-pub struct EvMapHandle<K : Eq + Hash + Clone, V : Eq + Hash + ShallowCopy, H : BuildHasher + Clone>(
+pub struct EvMapHandle<K: Eq + Hash + Clone, V: Eq + Hash + ShallowCopy, H: BuildHasher + Clone>(
     ReadHandle<K, V, EvMeta, H>,
     Arc<Mutex<WriteHandle<K, V, EvMeta, H>>>,
 );
@@ -61,6 +61,29 @@ where
         + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static;
 
+impl<K, V, H> EvMapCollection<K, V, H>
+where
+    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    V: Eq
+        + Hash
+        + ShallowCopy
+        + Send
+        + Sync
+        + Clone
+        + Copy
+        + Default
+        + std::ops::Add<Output = V>
+        + From<u64>
+        + 'static,
+    H: BuildHasher + Default + Send + Sync + Clone + 'static,
+{
+    pub fn with_capacity(_capacity: usize) -> Self {
+        let (r, w) = evmap::with_hasher::<K, V, EvMeta, H>(EvMeta::new(), H::default()); //(capacity, H::default());
+        let h = EvMapHandle::new(r, Arc::new(Mutex::new(w)));
+        Self(Arc::new(Mutex::new(h)))
+    }
+}
+
 unsafe impl<K, V, H> Sync for EvMapCollection<K, V, H>
 where
     K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
@@ -97,15 +120,16 @@ where
 {
     type Handle = EvMapHandle<K, V, H>;
 
-    fn with_capacity(_capacity: usize) -> Self {
-        let (r, w) = evmap::with_hasher::<K, V, EvMeta, H>(EvMeta::new(), H::default()); //(capacity, H::default());
-        let h = EvMapHandle::new(r, Arc::new(Mutex::new(w)));
-        Self(Arc::new(Mutex::new(h)))
-    }
-
     fn pin(&self) -> Self::Handle {
         let h = self.0.lock().unwrap();
         EvMapHandle::new(h.0.clone(), h.1.clone())
+    }
+
+    fn prefill_complete(&self)
+    {
+        let h = self.0.lock().unwrap();
+        let mut w = h.1.lock().unwrap();
+        w.refresh();
     }
 }
 
@@ -127,31 +151,28 @@ where
 {
     type Key = K;
 
-    fn get(&mut self, key: &Self::Key) -> bool {
+    fn get(&self, key: &Self::Key) -> bool {
         self.0.get_one(&key).is_some()
     }
 
-    fn insert(&mut self, key: Self::Key) -> bool {
+    fn insert(&self, key: Self::Key) -> bool {
         let mut w = self.1.lock().unwrap();
         w.insert(key, V::default());
-        w.refresh();
         true
     }
 
-    fn remove(&mut self, key: &Self::Key) -> bool {
+    fn remove(&self, key: &Self::Key) -> bool {
         let mut w = self.1.lock().unwrap();
         w.clear(key.clone());
-        w.refresh();
         true
     }
 
-    fn update(&mut self, key: &Self::Key) -> bool {
+    fn update(&self, key: &Self::Key) -> bool {
         if let Some(value) = self.0.get_one(&key) {
             let v = *value;
             drop(value);
             let mut w = self.1.lock().unwrap();
             w.update(key.clone(), v + V::from(1));
-            w.refresh();
             true
         } else {
             false

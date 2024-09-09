@@ -1,153 +1,139 @@
+use bench::Measurement;
+use bench::{Keys, Mix, RunConfig};
 use plotters::prelude::SVGBackend;
 use plotters::prelude::*;
 use plotters::style::RGBColor;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
-use std::hash::RandomState;
-use std::time::Duration;
+use std::io::Write;
+use std::sync::Arc;
 
 mod adapters;
 mod bench;
 
 use crate::adapters::*;
 
-type Groups = HashMap<String, Vec<Record>>;
-
 fn main() {
-    // Open the file for writing
-
-    fun_name(bench::Mix::read_only(), 100);
-    fun_name(bench::Mix::read_heavy(), 95);
+    run_perf_test(95);
+    run_perf_test(100);
 }
 
-fn fun_name(mix: bench::Mix, read_perc : i32) {
-    let mut records = Vec::<Record>::new();
-    let mut records_aff = Vec::<Record>::new();
-    let run_checks = false;
+fn run_perf_test(read_perc: i32) {
+    let spec = if read_perc == 100 {
+        Mix::read_only()
+    } else {
+        Mix::read_heavy()
+    };
 
-    for num_threads in 1..=16 {
-        let workload = bench::Workload::new(num_threads);
+    let mix = spec.to_ops();
+    let capacity = 1_000_000;
+    let total_ops = capacity * 55;
+    let prefill = capacity / 2;
+    let total_keys = prefill + (total_ops * spec.insert / 100) + 100;
 
-        // let std = bench::run_workload::<StdHashMapCollection<u64, u64, RandomState>>(
-        //         "std", mix, workload, run_checks, false,
-        //     );
+    let mut measurements = if read_perc == 100 {
+        Vec::new()
+    } else {
+        vec![
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 1, latency: 110 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 2, latency: 123 },
+            Measurement { name: "c#", total_ops: 54999999, thread_count: 3, latency: 143 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 4, latency: 158 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 5, latency: 167 },
+            Measurement { name: "c#", total_ops: 54999996, thread_count: 6, latency: 191 },
+            Measurement { name: "c#", total_ops: 54999994, thread_count: 7, latency: 210 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 8, latency: 238 },
+            Measurement { name: "c#", total_ops: 54999999, thread_count: 9, latency: 250 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 10, latency: 288 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 11, latency: 279 },
+            Measurement { name: "c#", total_ops: 54999996, thread_count: 12, latency: 307 },
+            Measurement { name: "c#", total_ops: 54999997, thread_count: 13, latency: 306 },
+            Measurement { name: "c#", total_ops: 54999994, thread_count: 14, latency: 324 },
+            Measurement { name: "c#", total_ops: 54999990, thread_count: 15, latency: 353 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 16, latency: 367 },
+        ]
+    };
 
-        let ev = bench::run_workload::<EvMapCollection<u64, u64, RandomState>>(
-            "ev", mix, workload, run_checks, false,
-        );
+    let keys = Arc::new(Keys::new(total_keys));
 
-        let ev_aff = bench::run_workload::<EvMapCollection<u64, u64, RandomState>>(
-            "ev aff", mix, workload, run_checks, true,
-        );
+    for i in 0..num_cpus::get() {
+        // Get the number of logical processors
+        let config = RunConfig {
+            threads: i + 1,
+            total_ops,
+            prefill,
+        };
 
-        let scc = bench::run_workload::<SccCollection<u64, u64, RandomState>>(
-            "scc", mix, workload, run_checks, false,
-        );
+        let scc = Arc::new(SccCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        measurements.push(bench::run_workload2(
+            &"scc",
+            scc,
+            mix.clone(),
+            config,
+            keys.clone(),
+        ));
 
-        let scc_aff = bench::run_workload::<SccCollection<u64, u64, RandomState>>(
-            "scc aff", mix, workload, run_checks, true,
-        );
+        let bfix =
+            Arc::new(BFixCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        measurements.push(bench::run_workload2(
+            &"bfix",
+            bfix,
+            mix.clone(),
+            config,
+            keys.clone(),
+        ));
 
-        let bfix = bench::run_workload::<BFixCollection<u64, u64, RandomState>>(
-            "bfix", mix, workload, run_checks, false,
-        );
-    
-        let bfix_aff = bench::run_workload::<BFixCollection<u64, u64, RandomState>>(
-            "bfix aff", mix, workload, run_checks, true,
-        );        
+        let ev = Arc::new(EvMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        measurements.push(bench::run_workload2(
+            &"ev",
+            ev,
+            mix.clone(),
+            config,
+            keys.clone(),
+        ));
 
-        //record(&mut records, "std", num_threads, std);
-        record(&mut records, "bfix", num_threads, bfix.clone());
-        record(&mut records, "scc", num_threads, scc.clone());
-        record(&mut records, "ev", num_threads, ev.clone());
-
-        record(&mut records_aff, "scc aff", num_threads, scc_aff);
-        record(&mut records_aff, "scc", num_threads, scc);
-
-        record(&mut records_aff, "ev aff", num_threads, ev_aff);
-        record(&mut records_aff, "ev", num_threads, ev);
-
-        record(&mut records_aff, "bfix aff", num_threads, bfix_aff);
-        record(&mut records_aff, "bfix", num_threads, bfix);        
+        //let std = Arc::new(StdHashMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        //measurements.push(bench::run_workload2(&"std", std,mix.clone(), config, keys.clone()));
     }
 
+    let csv_file_path = format!("latency{}.csv", read_perc);
+    let mut file = File::create(csv_file_path).expect("Failed to create CSV file");
+    writeln!(file, "name,total_ops,threads,latency").expect("Failed to write CSV header");
 
-    write_csv(&records, &format!("latency{}.csv", read_perc)).expect("failed to write csv");
-    write_csv(&records_aff, &format!("affinity{}.csv", read_perc)).expect("failed to write csv");
+    for m in &measurements {
+        let row = format!(
+            "{},{},{},{}",
+            m.name, m.total_ops, m.thread_count, m.latency
+        );
+        writeln!(file, "{}", row).expect("Failed to write CSV row");
+    }
 
     println!("Plotting");
-    plot(&records,&format!("Latency (read = {}%)", read_perc),  &format!("latency{}.svg", read_perc)).expect("failed to plot");
-    plot(&records_aff,&format!("Affinity (read = {}%)", read_perc),  &format!("affinity{}.svg", read_perc)).expect("failed to plot");
+    plot(
+        &measurements,
+        &format!("Latency (read = {}%)", read_perc),
+        &format!("latency{}.svg", read_perc),
+    )
+    .expect("failed to plot");
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-pub struct Record {
-    pub name: String,
-    pub total_ops: u64,
-    pub threads: usize,
-    #[serde(with = "timestamp")]
-    pub spent: Duration,
-    pub throughput: f64,
-    #[serde(with = "timestamp")]
-    pub latency: Duration,
-}
-
-mod timestamp {
-    use super::*;
-
-    use serde::{de::Deserializer, ser::Serializer};
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        u64::deserialize(deserializer).map(Duration::from_nanos)
-    }
-
-    pub fn serialize<S>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        (value.as_nanos() as u64).serialize(serializer)
-    }
-}
+type Groups = HashMap<&'static str, Vec<bench::Measurement>>;
 
 static COLORS: &[RGBColor] = &[BLUE, RED, GREEN, MAGENTA, CYAN, BLACK, YELLOW];
 const FONT: &str = "Fira Code";
 const PLOT_WIDTH: u32 = 800;
 const PLOT_HEIGHT: u32 = 400;
 
-fn record(records: &mut Vec<Record>, name: &str, num_threads: usize, m: bench::Measurement) {
-    let record = Record {
-        name: name.into(),
-        total_ops: m.total_ops,
-        threads: num_threads,
-        spent: m.spent,
-        latency: m.latency,
-        throughput: m.throughput,
-    };
-
-    records.push(record);
-}
-
-fn write_csv(records: &Vec<Record>, name : &str) -> Result<(), Box<dyn Error>> {
-    let file = File::create(name).expect("Failed to create file");
-    let mut wr = csv::WriterBuilder::new().from_writer(file);
-
-    for record in records.iter() {
-        wr.serialize(record).expect("cannot serialize");
-    }
-
-    Ok(())
-}
-
-pub fn plot(records: &Vec<Record>, caption : &str, path : &str) -> Result<(), Box<dyn Error>> {
+pub fn plot(
+    records: &Vec<bench::Measurement>,
+    caption: &str,
+    path: &str,
+) -> Result<(), Box<dyn Error>> {
     let mut groups = Groups::new();
 
     for record in records.iter() {
-        let group = groups.entry(record.name.clone()).or_insert_with(Vec::new);
+        let group = groups.entry(record.name).or_insert_with(Vec::new);
         group.push(record.clone());
     }
 
@@ -159,12 +145,8 @@ pub fn plot(records: &Vec<Record>, caption : &str, path : &str) -> Result<(), Bo
     let (x_max, y_max) = groups
         .values()
         .flatten()
-        .map(|record| (record.threads, record.latency))
-        .fold((0, Duration::from_secs(0)), |res, cur| {
-            (res.0.max(cur.0), res.1.max(cur.1))
-        });
-
-    let y_max = y_max.as_nanos() as u64;
+        .map(|record| (record.thread_count, record.latency))
+        .fold((0, 0), |res, cur| (res.0.max(cur.0), res.1.max(cur.1)));
 
     let mut chart = ChartBuilder::on(&root)
         .margin(10)
@@ -192,10 +174,10 @@ pub fn plot(records: &Vec<Record>, caption : &str, path : &str) -> Result<(), Bo
             .draw_series(LineSeries::new(
                 records
                     .iter()
-                    .map(|record| (record.threads, record.latency.as_nanos() as u64)),
+                    .map(|record| (record.thread_count, record.latency)),
                 color,
             ))?
-            .label(&records[0].name)
+            .label(records[0].name)
             .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], color));
     }
 
