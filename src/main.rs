@@ -15,6 +15,9 @@ mod bench;
 
 use crate::adapters::*;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     run_perf_test(95);
     run_perf_test(100);
