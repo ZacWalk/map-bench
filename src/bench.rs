@@ -1,3 +1,4 @@
+use core_affinity::get_core_ids;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
@@ -8,6 +9,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Instant;
+use affinity::set_thread_affinity;
 
 /// A collection that can be benchmarked by bustle.
 ///
@@ -212,14 +214,19 @@ pub fn run_workload2<H: Collection>(
 
     collection.prefill_complete();
 
-    for _ in 0..num_threads {        
+    let core_ids = get_core_ids().expect("Failed to get core IDs");
+
+    for n in 0..num_threads {        
         let operations = operations.clone();
         let barrier = barrier.clone();
         let total_milliseconds = total_milliseconds.clone();
         let collection = collection.clone();
         let keys = keys.clone();
+        let core_id = core_ids[n % core_ids.len()];
+        let core_id_usize = core_id.id as usize;
 
         let handle = thread::spawn(move || {
+            set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
             let dict = collection.pin();
             barrier.wait();
             let start = Instant::now();
