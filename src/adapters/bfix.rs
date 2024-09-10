@@ -1,168 +1,159 @@
 use crate::bench::{Collection, CollectionHandle};
+use std::alloc;
 use std::borrow::Borrow;
-use std::cell::UnsafeCell;
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::ptr::null_mut;
+use std::sync::atomic::{AtomicPtr, AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+const BLOCK_SIZE: usize = 64;
+const NUM_BLOCKS: usize = 8;
 
-type LOCK_ATOMIC = AtomicU64;
-const LOCK_BITS: usize = size_of::<LOCK_ATOMIC>() * 8;
-
-pub struct BitLock<T> {
-    lock_state: LOCK_ATOMIC,
-    data: UnsafeCell<T>,
+pub struct BFixVec<T> {
+    size: AtomicUsize,
+    blocks: [AtomicPtr<T>; NUM_BLOCKS],
 }
 
-unsafe impl<T: Send> Sync for BitLock<T> {} // Required for shared access across threads
-
-impl<T> BitLock<T> {
-    pub fn new(data: T) -> Self {
+impl<T: Default> BFixVec<T> {
+    fn new() -> Self {
         Self {
-            lock_state: LOCK_ATOMIC::new(0), // Initially, no locks are held
-            data: UnsafeCell::new(data),
+            size: AtomicUsize::new(0),
+            blocks: [const { AtomicPtr::new(null_mut::<T>()) }; NUM_BLOCKS], // All blocks initially None
         }
     }
 
-    #[inline]
-    pub fn read(&self) -> BitLockReadGuard<T> {
-        loop {
-            let current_state = self.lock_state.load(Ordering::Acquire);
+    fn allocate(&self) -> Option<(usize, &mut T)> {
+        let current_size = self.size.fetch_add(1, Ordering::Acquire);
+        let block_index = current_size / BLOCK_SIZE;
+        let index_in_block = current_size % BLOCK_SIZE;
 
-            // Check if the exclusive lock (bit 0) is held
-            if current_state & 1 == 0 {
-                // Find the first zero bit (available lock bit)
-                let lock_bit = ((!current_state) | 1).leading_zeros() as usize;
+        // Lazily allocate a block if needed
+        if block_index < NUM_BLOCKS {
+            let mut block_ptr = self.blocks[block_index].load(Ordering::Acquire);
+            if block_ptr.is_null() {
+                let new_block_ptr =
+                    unsafe { alloc::alloc(alloc::Layout::array::<T>(BLOCK_SIZE).unwrap()) }
+                        as *mut T;
 
-                if lock_bit != LOCK_BITS {
-                    let lock_bit = (LOCK_BITS - 1) - lock_bit;
-                    let lock_bit_mask = 1 << lock_bit;
-
-                    // Try to acquire the found lock bit
-                    if self
-                        .lock_state
-                        .compare_exchange_weak(
-                            current_state,
-                            current_state | lock_bit_mask,
-                            Ordering::AcqRel,
-                            Ordering::Relaxed,
-                        )
-                        .is_ok()
-                    {
-                        return BitLockReadGuard {
-                            lock: self,
-                            lock_bit: lock_bit_mask,
-                        };
+                // Attempt to store the new block pointer atomically
+                match self.blocks[block_index].compare_exchange(
+                    block_ptr,
+                    new_block_ptr,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        block_ptr = new_block_ptr;
+                    } // Successfully stored the new block pointer
+                    Err(_) => {
+                        // Another thread already allocated the block
+                        unsafe {
+                            alloc::dealloc(
+                                new_block_ptr as *mut u8,
+                                alloc::Layout::array::<T>(BLOCK_SIZE).unwrap(),
+                            );
+                        }
+                        block_ptr = self.blocks[block_index].load(Ordering::SeqCst);
                     }
                 }
             }
 
-            std::hint::spin_loop(); // Spin-wait efficiently
-        }
-    }
+            let result: &mut T = unsafe {
+                let raw_ptr = block_ptr.add(index_in_block);
+                std::ptr::write(raw_ptr, T::default());
+                &mut *raw_ptr
+            };
 
-    #[inline]
-    pub fn write(&self) -> BitLockWriteGuard<T> {
-        // First, try to acquire the exclusive lock (bit 0)
-        while self
-            .lock_state
-            .compare_exchange_weak(0, 1, Ordering::AcqRel, Ordering::Relaxed)
-            .is_err()
-        {}
-
-        // Wait for all other locks to be released
-        while self.lock_state.load(Ordering::Acquire) != 1 {
-            std::hint::spin_loop(); // Spin-wait efficiently
+            return Some((current_size, result));
         }
 
-        BitLockWriteGuard { lock: self }
+        None
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        let current_size = self.size.load(Ordering::Acquire);
+        if index >= current_size {
+            return None;
+        }
+
+        let block_index = index / BLOCK_SIZE;
+        let index_in_block = index % BLOCK_SIZE;
+
+        let ptr = self.blocks[block_index].load(Ordering::Acquire);
+
+        if !ptr.is_null() {
+            // Safety: We've checked the index is within bounds,
+            // and blocks are only accessed after they're allocated
+            let value_ref: &T = unsafe { &*ptr.add(index_in_block) };
+            return Some(value_ref);
+        }
+
+        None
+    }
+
+    fn get_unchecked(&self, index: usize) -> &T {
+        let block_index = index / BLOCK_SIZE;
+        let index_in_block = index % BLOCK_SIZE;
+        let ptr = self.blocks[block_index].load(Ordering::Acquire);
+
+        // Safety: We've checked the index is within bounds,
+        // and blocks are only accessed after they're allocated
+        unsafe { &*ptr.add(index_in_block) }
+    }
+
+    fn get_mut_unchecked(&self, index: usize) -> &mut T {
+        let block_index = index / BLOCK_SIZE;
+        let index_in_block = index % BLOCK_SIZE;
+        let ptr = self.blocks[block_index].load(Ordering::Acquire);
+
+        // Safety: We've checked the index is within bounds,
+        // and blocks are only accessed after they're allocated
+        unsafe { &mut *ptr.add(index_in_block) }
     }
 }
-
-pub struct BitLockReadGuard<'a, T> {
-    lock: &'a BitLock<T>,
-    lock_bit: u64,
-}
-
-impl<'a, T> std::ops::Deref for BitLockReadGuard<'a, T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<'a, T> Drop for BitLockReadGuard<'a, T> {
-
-    #[inline]
-    fn drop(&mut self) {
-        // Release the lock bit when the guard is dropped
-        self.lock
-            .lock_state
-            .fetch_and(!self.lock_bit, Ordering::Release);
-    }
-}
-
-pub struct BitLockWriteGuard<'a, T> {
-    lock: &'a BitLock<T>,
-}
-
-impl<'a, T> std::ops::Deref for BitLockWriteGuard<'a, T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<'a, T> std::ops::DerefMut for BitLockWriteGuard<'a, T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.lock.data.get() }
-    }
-}
-
-impl<'a, T> Drop for BitLockWriteGuard<'a, T> {
-    #[inline]
-    fn drop(&mut self) {
-        // Release the exclusive lock (bit 0)
-        self.lock.lock_state.fetch_and(!1, Ordering::Release);
-    }
-}
-
-type BFixLock<T> = parking_lot::RwLock<T>;
-//type BFixLock<T> = BitLock<T>;
-
 
 const SLOT_BITS: usize = 8;
 const SLOT_COUNT: usize = 1 << SLOT_BITS;
 const SLOT_MASK: u64 = (SLOT_COUNT - 1) as u64;
 
-struct Entry<K, V> {
-    //slot: u8,
+struct Entry<K: Default, V: Default> {
     key: K,
     value: V,
-    next: u16,
+    next: AtomicU16,
 }
 
-struct Shard<K, V> {
-    slots: [u16; SLOT_COUNT],
-    entries: Vec<Entry<K, V>>,
-}
-
-impl<K, V> Shard<K, V> {
-    fn new() -> Self {
+impl<K: Default, V: Default> Default for Entry<K, V> {
+    fn default() -> Self {
         Self {
-            slots: [0; SLOT_COUNT],
-            entries: Vec::new(),
+            key: K::default(),
+            value: V::default(),
+            next: AtomicU16::new(0), // Or any other suitable default value for 'next'
         }
     }
 }
 
-pub struct BFixMap<K, V: Clone, S = RandomState> {
-    buckets: Vec<BFixLock<Shard<K, V>>>,
+struct Shard<K: Default, V: Default> {
+    slots: [AtomicU16; SLOT_COUNT],
+    entries: BFixVec<Entry<K, V>>,
+}
+
+impl<K: Default, V: Default> Shard<K, V> {
+    fn new() -> Self {
+        Self {
+            slots: [const { AtomicU16::new(0) }; SLOT_COUNT],
+            entries: BFixVec::new(),
+        }
+    }
+
+    fn allocate_entry(&self) -> Option<(usize, &mut Entry<K, V>)> {
+        self.entries.allocate()
+    }
+
+    fn free_entry(&self, i: usize) {}
+}
+
+pub struct BFixMap<K: Default, V: Clone + Default, S = RandomState> {
+    shards: Vec<Shard<K, V>>,
     build_hasher: S,
     bucket_count: usize,
 }
@@ -190,34 +181,39 @@ fn closest_power_of_2_min_1024(value: usize) -> usize {
 }
 
 #[inline]
-fn find_index<Q, K, V>(bucket: &Shard<K, V>, slot: usize, key: &Q) -> (Option<usize>, Option<usize>)
+fn find_index<Q, K: Default, V: Default>(
+    bucket: &Shard<K, V>,
+    slot: usize,
+    key: &Q,
+) -> (Option<usize>, Option<usize>, usize)
 where
     K: Borrow<Q> + Eq,
     Q: Eq + Hash + ?Sized,
 {
-    let i = bucket.slots[slot] as usize;
+    let i = bucket.slots[slot].load(Ordering::Acquire) as usize;
     let mut prev: Option<usize> = None;
 
     if i != 0 {
         let mut ii = i - 1;
 
         loop {
-            let entry = &bucket.entries[ii];
+            let entry = &bucket.entries.get_unchecked(ii);
 
             if entry.key.borrow() == key {
-                return (Some(ii), prev);
+                return (Some(ii), prev, i);
             }
 
             prev = Some(ii);
+            let next = entry.next.load(Ordering::Acquire);
 
-            if entry.next == 0 {
-                return (None, prev); // not found
+            if next == 0 {
+                return (None, prev, i); // not found
             }
 
-            ii = (entry.next - 1) as usize;
+            ii = (next - 1) as usize;
         }
     }
-    (None, None)
+    (None, None, i)
 }
 
 /// A concurrent hash map with bucket-level fine-grained locking.
@@ -236,15 +232,17 @@ where
 /// * `K`: The type of keys stored in the map. Must implement `Hash` and `Eq`.
 /// * `V`: The type of values stored in the map. Must implement `Clone`.
 /// * `S`: The type of build hasher used for hashing keys. Defaults to `RandomState`.
-impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixMap<K, V, S> {
+impl<K: Hash + Eq + Default + Clone, V: Clone + Default, S: BuildHasher + Default>
+    BFixMap<K, V, S>
+{
     /// Creates a new `BFixMap` with the specified capacity and build hasher.
     pub fn with_capacity_and_hasher(capacity: usize, build_hasher: S) -> Self {
         let bucket_count = closest_power_of_2_min_1024(capacity / 222);
         let mut buckets = Vec::with_capacity(bucket_count);
-        buckets.resize_with(bucket_count, || BFixLock::new(Shard::<K, V>::new()));
+        buckets.resize_with(bucket_count, || Shard::<K, V>::new());
 
         Self {
-            buckets,
+            shards: buckets,
             build_hasher,
             bucket_count,
         }
@@ -256,7 +254,7 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
     }
 
     #[inline]
-    fn hash_key<Q>(&self, key: &Q) -> (usize, usize)
+    fn calc_index<Q>(&self, key: &Q) -> (usize, usize)
     where
         K: Borrow<Q>,
         Q: Hash + ?Sized,
@@ -265,7 +263,10 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
         key.hash(&mut hasher);
         let h = hasher.finish();
         let shard_mask = (self.bucket_count - 1) as u64;
-        (((h >> SLOT_BITS) & shard_mask) as usize, (h & SLOT_MASK) as usize)
+        (
+            ((h >> SLOT_BITS) & shard_mask) as usize,
+            (h & SLOT_MASK) as usize,
+        )
     }
 
     /// Retrieves the value associated with the given key, if it exists.
@@ -275,26 +276,27 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
         K: Borrow<Q>,
         Q: Eq + Hash + ?Sized,
     {
-        let (hash_key, slot) = self.hash_key(&key);
-        let bucket = &self.buckets[hash_key].read();
-
-        let i = bucket.slots[slot as usize] as usize;
+        let (shard_index, slot) = self.calc_index(&key);
+        let shard = &self.shards[shard_index];
+        let i = shard.slots[slot as usize].load(Ordering::Relaxed) as usize;
 
         if i != 0 {
             let mut ii = i - 1;
 
             loop {
-                let entry = &bucket.entries[ii];
+                let entry = &shard.entries.get_unchecked(ii);
 
                 if entry.key.borrow() == key {
                     return Some(entry.value.clone());
                 }
 
-                if entry.next == 0 {
+                let next = entry.next.load(Ordering::Relaxed);
+
+                if next == 0 {
                     return None; // not found
                 }
 
-                ii = (entry.next - 1) as usize;
+                ii = (next - 1) as usize;
             }
         }
 
@@ -306,29 +308,54 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
     /// If the key already exists, its value is replaced and the old value is returned.
     /// Otherwise, `None` is returned.
     pub fn insert(&self, key: K, value: V) -> Option<V> {
-        let (hash_key, slot) = self.hash_key(&key);
-        let mut bucket = self.buckets[hash_key].write();
+        let (shard_index, slot) = self.calc_index(&key);
+        let shard = &self.shards[shard_index];
+        let mut inserted_index: Option<usize> = None;
 
-        let (found_index, prev_index) = find_index(&bucket, slot, &key);
-        //let mut writer = BFixLockGuard::upgrade(bucket);
+        loop {
+            let (found_index, _, slot_value) = find_index(&shard, slot, &key);
 
-        if let Some(index) = found_index {
-            let entry = &mut bucket.entries[index];
-            return Some(std::mem::replace(&mut entry.value, value));
-        }
+            if let Some(index) = found_index {
+                if let Some(i) = inserted_index {
+                    shard.free_entry(i);
+                }
 
-        bucket.entries.push(Entry {
-            next: 0,
-            key,
-            value: value,
-        });
+                let entry = &mut shard.entries.get_mut_unchecked(index);
+                return Some(std::mem::replace(&mut entry.value, value));
+            }
 
-        let len = bucket.entries.len();
+            if inserted_index == None {
+                let inserted = shard.allocate_entry();
 
-        if let Some(index) = prev_index {
-            bucket.entries[index].next = len as u16;
-        } else {
-            bucket.slots[slot as usize] = len as u16; // std::cmp::min(len, 255) as u8;
+                if let Some((i, entry)) = inserted {
+                    entry.value = value.clone();
+                    entry.key = key.clone();
+                    inserted_index = Some(i);
+                } else {
+                    return None; //failed to allocate block!!
+                }
+            }
+
+            shard
+                .entries
+                .get_mut_unchecked(inserted_index.unwrap())
+                .next
+                .store(slot_value as u16, Ordering::Release);
+
+            match shard.slots[slot as usize].compare_exchange(
+                slot_value as u16,
+                (inserted_index.unwrap() + 1) as u16,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    break; // success
+                }
+                Err(_) => {
+                    // Another thread already inserted on this slot.
+                    // Need to try again.
+                }
+            }
         }
 
         None
@@ -338,28 +365,64 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
     ///
     /// If the key exists, its value is removed and returned. Otherwise, `None` is returned.
     pub fn remove(&self, key: &K) -> Option<V> {
-        let (hash_key, slot) = self.hash_key(&key);
-        let mut bucket = self.buckets[hash_key].write();
+        let (shard_index, slot) = self.calc_index(&key);
+        let shard = &self.shards[shard_index];
 
-        let (index, prev_index) = find_index(&bucket, slot, &key);
+        loop {
+            let (found_index, prev_index, slot_value) = find_index(&shard, slot, &key);
 
-        if let Some(index) = index {
-            let entry = &mut bucket.entries[index];
-            let result = Some(std::mem::replace(&mut entry.value, V::default()));
-            let slot_index = slot as usize;
+            if let Some(ifound) = found_index {
+                let entry = &mut shard.entries.get_mut_unchecked(ifound);
+                let next = entry.next.load(Ordering::Acquire); 
+                // XXXXX Bug: `next` could change before the write to slots 
+                // XXXXX Need an intermediate step to remove from list?
 
-            if let Some(index) = prev_index {
-                bucket.entries[index].next = entry.next;
+                // Remove from slot
+                if slot_value == ifound + 1 {
+                    match shard.slots[slot as usize].compare_exchange(
+                        slot_value as u16,
+                        next,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => {
+                            // success
+                        }
+                        Err(_) => {
+                            // Another thread already inserted on this slot.
+                            // Need to try again.
+                            continue;
+                        }
+                    }
+                }
+                else { 
+                    // remove from prev in list
+                    let prev_entry = &mut shard.entries.get_mut_unchecked(prev_index.unwrap());
+
+                    match prev_entry.next.compare_exchange(
+                        (ifound + 1) as u16,
+                        next,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => {
+                            // success
+                        }
+                        Err(_) => {
+                            // Another thread already replaced next.
+                            // Need to try again.
+                            continue;
+                        }
+                    }
+                }
+
+                let result = Some(std::mem::replace(&mut entry.value, V::default()));
+                shard.free_entry(ifound);
+                return result;
             }
 
-            if bucket.slots[slot_index] == index as u16 {
-                bucket.slots[slot_index] = 0u16;
-            }
-
-            return result;
+            return None // Didnt find
         }
-
-        None
     }
 
     /// Modifies the value associated with the given key using the provided function.
@@ -370,13 +433,12 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
     where
         F: FnOnce(&mut V),
     {
-        let (hash_key, slot) = self.hash_key(&key);
-        let mut bucket = self.buckets[hash_key].write();
-        let (index, _) = find_index(&bucket, slot, &key);
+        let (shard_index, slot) = self.calc_index(&key);
+        let shard = &self.shards[shard_index];
+        let (found_index, _, _) = find_index(&shard, slot, &key);
 
-        if let Some(index) = index {
-            //let mut writer = BFixLockGuard::upgrade(bucket);
-            let entry = &mut bucket.entries[index];
+        if let Some(index) = found_index {
+            let entry = &mut shard.entries.get_mut_unchecked(index);
             f(&mut entry.value);
             return true;
         }
@@ -385,12 +447,17 @@ impl<K: Hash + Eq + Default, V: Clone + Default, S: BuildHasher + Default> BFixM
     }
 }
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #[derive(Clone)]
-pub struct BFixCollection<K: Eq + Hash + Send + 'static, V: Clone, H: BuildHasher + 'static>(
+pub struct BFixCollection<K: Eq + Hash + Send + 'static + Default, V: Clone + Default, H: BuildHasher + 'static>(
     Arc<BFixMap<K, V, H>>,
 );
 
-pub struct BFixHandle<K: Eq + Hash + Send + 'static, V: Clone, H: BuildHasher + 'static>(
+pub struct BFixHandle<K: Eq + Hash + Send + 'static + Default, V: Clone + Default, H: BuildHasher + 'static>(
     Arc<BFixMap<K, V, H>>,
 );
 
@@ -410,8 +477,8 @@ where
 
 impl<K, V, H> BFixHandle<K, V, H>
 where
-    K: Send + Sync + Eq + Hash + Clone + Eq + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Eq + Hash + Clone + Eq + 'static + Default,
+    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static + Default,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
     pub fn new(m: Arc<BFixMap<K, V, H>>) -> Self {

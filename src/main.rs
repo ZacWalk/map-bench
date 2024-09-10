@@ -42,22 +42,22 @@ fn run_perf_test(read_perc: i32) {
         Vec::new()
     } else {
         vec![
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 1, latency: 110 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 2, latency: 123 },
-            Measurement { name: "c#", total_ops: 54999999, thread_count: 3, latency: 143 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 4, latency: 158 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 5, latency: 167 },
-            Measurement { name: "c#", total_ops: 54999996, thread_count: 6, latency: 191 },
-            Measurement { name: "c#", total_ops: 54999994, thread_count: 7, latency: 210 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 8, latency: 238 },
-            Measurement { name: "c#", total_ops: 54999999, thread_count: 9, latency: 250 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 10, latency: 288 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 11, latency: 279 },
-            Measurement { name: "c#", total_ops: 54999996, thread_count: 12, latency: 307 },
-            Measurement { name: "c#", total_ops: 54999997, thread_count: 13, latency: 306 },
-            Measurement { name: "c#", total_ops: 54999994, thread_count: 14, latency: 324 },
-            Measurement { name: "c#", total_ops: 54999990, thread_count: 15, latency: 353 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 16, latency: 367 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 1, latency: 94 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 2, latency: 107 },
+            Measurement { name: "c#", total_ops: 54999999, thread_count: 3, latency: 119 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 4, latency: 141 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 5, latency: 155 },
+            Measurement { name: "c#", total_ops: 54999996, thread_count: 6, latency: 167 },
+            Measurement { name: "c#", total_ops: 54999994, thread_count: 7, latency: 180 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 8, latency: 212 },
+            Measurement { name: "c#", total_ops: 54999999, thread_count: 9, latency: 240 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 10, latency: 238 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 11, latency: 260 },
+            Measurement { name: "c#", total_ops: 54999996, thread_count: 12, latency: 263 },
+            Measurement { name: "c#", total_ops: 54999997, thread_count: 13, latency: 294 },
+            Measurement { name: "c#", total_ops: 54999994, thread_count: 14, latency: 298 },
+            Measurement { name: "c#", total_ops: 54999990, thread_count: 15, latency: 324 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 16, latency: 321 },
         ]
     };
 
