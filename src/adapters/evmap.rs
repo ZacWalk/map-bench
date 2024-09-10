@@ -24,7 +24,7 @@ pub struct EvMapHandle<K: Eq + Hash + Clone, V: Eq + Hash + ShallowCopy, H: Buil
 
 impl<K, V, H> EvMapHandle<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64>  + Hash + Ord + Clone + 'static,
     V: Eq
         + Hash
         + ShallowCopy
@@ -47,14 +47,13 @@ where
 
 pub struct EvMapCollection<K, V, H>(Arc<Mutex<EvMapHandle<K, V, H>>>)
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64>  + Hash + Ord + Clone + 'static,
     V: Eq
         + Hash
         + ShallowCopy
         + Send
         + Sync
-        + Clone
-        + Copy
+        + Clone        
         + Default
         + std::ops::Add<Output = V>
         + From<u64>
@@ -63,14 +62,13 @@ where
 
 impl<K, V, H> EvMapCollection<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
     V: Eq
         + Hash
         + ShallowCopy
         + Send
         + Sync
-        + Clone
-        + Copy
+        + Clone        
         + Default
         + std::ops::Add<Output = V>
         + From<u64>
@@ -86,14 +84,13 @@ where
 
 unsafe impl<K, V, H> Sync for EvMapCollection<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
     V: Eq
         + Hash
         + ShallowCopy
         + Send
         + Sync
-        + Clone
-        + Copy
+        + Clone        
         + Default
         + std::ops::Add<Output = V>
         + From<u64>
@@ -104,14 +101,13 @@ where
 
 impl<K, V, H> Collection for EvMapCollection<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
     V: Eq
         + Hash
         + ShallowCopy
         + Send
         + Sync
-        + Clone
-        + Copy
+        + Clone        
         + Default
         + std::ops::Add<Output = V>
         + From<u64>
@@ -135,14 +131,13 @@ where
 
 impl<K, V, H> CollectionHandle for EvMapHandle<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
     V: Eq
         + Hash
         + ShallowCopy
         + Send
         + Sync
-        + Clone
-        + Copy
+        + Clone        
         + Default
         + std::ops::Add<Output = V>
         + From<u64>
@@ -169,7 +164,7 @@ where
 
     fn update(&self, key: &Self::Key) -> bool {
         if let Some(value) = self.0.get_one(&key) {
-            let v = *value;
+            let v = value.clone();
             drop(value);
             let mut w = self.1.lock().unwrap();
             w.update(key.clone(), v + V::from(1));

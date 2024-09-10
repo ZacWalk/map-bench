@@ -488,7 +488,7 @@ where
 
 impl<K, V, H> Collection for BFixCollection<K, V, H>
 where
-    K: Send + Default + Sync + From<u64> + Copy + Hash + Ord + Eq + 'static,
+    K: Send + Default + Sync + From<u64>  + Hash + Ord + Eq + Clone + 'static,
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
@@ -503,7 +503,7 @@ where
 
 impl<K, V, H> CollectionHandle for BFixHandle<K, V, H>
 where
-    K: Send + Default + Sync + From<u64> + Copy + Hash + Ord + Eq + 'static,
+    K: Send + Default + Sync + From<u64> + Hash + Ord + Eq + Clone + 'static,
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {

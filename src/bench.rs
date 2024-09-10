@@ -28,7 +28,7 @@ pub trait Collection: Send + Sync + 'static {
 /// free to use the same value for all operations, or use distinct ones and check that your
 /// retrievals indeed return the right results.
 pub trait CollectionHandle {
-    type Key: From<u64> + Clone + Send + Sync + Copy;
+    type Key: From<u64> + Clone + Send + Sync;
 
     fn get(&self, key: &Self::Key) -> bool;
     fn insert(&self, key: Self::Key) -> bool;
@@ -58,7 +58,7 @@ pub struct Keys<TK: From<u64> + Clone + Send + Sync> {
 
 impl<TK> Keys<TK>
 where
-    TK: Send + Sync + From<u64> + Copy + Clone,
+    TK: Send + Sync + From<u64> + Clone,
 {
     pub fn new(total_keys: usize) -> Self {
         let mut rng = rand::thread_rng();
@@ -80,7 +80,7 @@ where
 
     pub fn random(&self, i: usize) -> TK {
         let allocated = self.allocated.load(Ordering::Relaxed);
-        self.keys[i % allocated]
+        self.keys[i % allocated].clone()
     }
 
     // too slow
@@ -172,7 +172,7 @@ fn run_ops<H: CollectionHandle>(
         let r = rng.gen::<usize>(); // Generate a random usize
         let success = match op {
             Operation::Read => dict.get(&keys.random(r)),
-            Operation::Insert => dict.insert(*new_keys.next().unwrap()),
+            Operation::Insert => dict.insert(new_keys.next().unwrap().clone()),
             Operation::Remove => dict.remove(&keys.random(r)),
             Operation::Update => {
                 dict.update(&keys.random(r))
@@ -219,7 +219,7 @@ pub fn run_workload<H: Collection>(
     let mut new_keys = keys.alloc_n(config.prefill).iter().cycle();
     let inserter = collection.pin();
     for _ in 0..config.prefill {
-        inserter.insert(*new_keys.next().unwrap());
+        inserter.insert(new_keys.next().unwrap().clone());
     }
 
     collection.prefill_complete();

@@ -3,12 +3,13 @@ use bench::{Keys, Mix, RunConfig};
 use plotters::prelude::SVGBackend;
 use plotters::prelude::*;
 use plotters::style::RGBColor;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::sync::Arc;
-use std::collections::BTreeMap;
 
 mod adapters;
 mod bench;
@@ -23,6 +24,93 @@ fn main() {
     run_perf_test(100);
 }
 
+#[derive(Clone, Default)]
+struct StringKey(String);
+
+impl From<u64> for StringKey {
+    fn from(num: u64) -> Self {
+        // Your conversion logic here
+        StringKey(num.to_string())
+    }
+}
+
+impl PartialEq for StringKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for StringKey {}
+
+impl Hash for StringKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl PartialOrd for StringKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(&other.0) // Compare the underlying strings
+    }
+}
+
+impl Ord for StringKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0) // Compare the underlying strings
+    }
+
+    fn max(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::max_by(self, other, Ord::cmp)
+    }
+
+    fn min(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::min_by(self, other, Ord::cmp)
+    }
+
+    fn clamp(self, min: Self, max: Self) -> Self
+    where
+        Self: Sized,
+    {
+        assert!(min <= max);
+        if self < min {
+            min
+        } else if self > max {
+            max
+        } else {
+            self
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct StrKey<'a>(&'a str); 
+
+impl<'a> From<u64> for StrKey<'a> {
+    fn from(num: u64) -> Self {
+        // Convert u64 to string and leak it to get a static str
+        let s: &'static str = Box::leak(format!("{}", num).into_boxed_str());
+        StrKey(s)
+    }
+}
+
+impl<'a> Default for StrKey<'a> {
+    fn default() -> Self {
+        // You need a 'static str for the default value
+        static DEFAULT_STR: &str = "";
+        StrKey(DEFAULT_STR)
+    }
+}
+
+type Key<'a> = StrKey<'a>;
+//type Key = StringKey;
+//type Key = u64;
+
 fn run_perf_test(read_perc: i32) {
     let spec = if read_perc == 100 {
         Mix::read_only()
@@ -34,30 +122,29 @@ fn run_perf_test(read_perc: i32) {
     let capacity = 1_000_000;
     let total_ops = capacity * 55;
     let prefill = capacity / 2;
-    let keys_needed_for_inserts = (total_ops * spec.insert / 100) + 1; 
+    let keys_needed_for_inserts = (total_ops * spec.insert / 100) + 1;
     let total_keys = prefill + keys_needed_for_inserts + 1000; // 1000 needed for some rounding error?
-    
 
     let mut measurements = if read_perc == 100 {
         Vec::new()
     } else {
         vec![
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 1, latency: 94 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 2, latency: 107 },
-            Measurement { name: "c#", total_ops: 54999999, thread_count: 3, latency: 119 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 4, latency: 141 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 5, latency: 155 },
-            Measurement { name: "c#", total_ops: 54999996, thread_count: 6, latency: 167 },
-            Measurement { name: "c#", total_ops: 54999994, thread_count: 7, latency: 180 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 8, latency: 212 },
-            Measurement { name: "c#", total_ops: 54999999, thread_count: 9, latency: 240 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 10, latency: 238 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 11, latency: 260 },
-            Measurement { name: "c#", total_ops: 54999996, thread_count: 12, latency: 263 },
-            Measurement { name: "c#", total_ops: 54999997, thread_count: 13, latency: 294 },
-            Measurement { name: "c#", total_ops: 54999994, thread_count: 14, latency: 298 },
-            Measurement { name: "c#", total_ops: 54999990, thread_count: 15, latency: 324 },
-            Measurement { name: "c#", total_ops: 55000000, thread_count: 16, latency: 321 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 1, latency: 173 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 2, latency: 197 },
+            Measurement { name: "c#", total_ops: 54999999, thread_count: 3, latency: 214 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 4, latency: 253 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 5, latency: 269 },
+            Measurement { name: "c#", total_ops: 54999996, thread_count: 6, latency: 301 },
+            Measurement { name: "c#", total_ops: 54999994, thread_count: 7, latency: 328 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 8, latency: 349 },
+            Measurement { name: "c#", total_ops: 54999999, thread_count: 9, latency: 361 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 10, latency: 398 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 11, latency: 374 },
+            Measurement { name: "c#", total_ops: 54999996, thread_count: 12, latency: 416 },
+            Measurement { name: "c#", total_ops: 54999997, thread_count: 13, latency: 446 },
+            Measurement { name: "c#", total_ops: 54999994, thread_count: 14, latency: 398 },
+            Measurement { name: "c#", total_ops: 54999990, thread_count: 15, latency: 435 },
+            Measurement { name: "c#", total_ops: 55000000, thread_count: 16, latency: 477 },
         ]
     };
 
@@ -73,7 +160,7 @@ fn run_perf_test(read_perc: i32) {
 
         let keys_needed_per_thread = keys_needed_for_inserts / config.threads;
 
-        let scc = Arc::new(SccCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        let scc = Arc::new(SccCollection::<Key, u64, ahash::RandomState>::with_capacity(capacity));
         measurements.push(bench::run_workload(
             &"scc",
             scc,
@@ -84,7 +171,7 @@ fn run_perf_test(read_perc: i32) {
         ));
 
         let bfix =
-            Arc::new(BFixCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+            Arc::new(BFixCollection::<Key, u64, ahash::RandomState>::with_capacity(capacity));
         measurements.push(bench::run_workload(
             &"bfix",
             bfix,
@@ -94,7 +181,9 @@ fn run_perf_test(read_perc: i32) {
             keys_needed_per_thread,
         ));
 
-        let ev = Arc::new(EvMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        let ev = Arc::new(
+            EvMapCollection::<Key, u64, ahash::RandomState>::with_capacity(capacity),
+        );
         measurements.push(bench::run_workload(
             &"ev",
             ev,
@@ -104,7 +193,8 @@ fn run_perf_test(read_perc: i32) {
             keys_needed_per_thread,
         ));
 
-        let ev = Arc::new(NopCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        let ev =
+            Arc::new(NopCollection::<Key, u64, ahash::RandomState>::with_capacity(capacity));
         measurements.push(bench::run_workload(
             &"nop",
             ev,
@@ -195,9 +285,8 @@ pub fn plot(
         .x_desc("Threads")
         .draw()?;
 
-    
     for records in groups.values() {
-        let color = color_map.get(records[0].name).unwrap(); 
+        let color = color_map.get(records[0].name).unwrap();
         chart
             .draw_series(LineSeries::new(
                 records

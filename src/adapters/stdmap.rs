@@ -43,7 +43,7 @@ where
 
 impl<K, V, H> Collection for StdHashMapCollection<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
@@ -60,7 +60,7 @@ where
 
 impl<K, V, H> CollectionHandle for StdHashMapHandle<K, V, H>
 where
-    K: Send + Sync + From<u64> + Copy + Hash + Ord + 'static,
+    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
