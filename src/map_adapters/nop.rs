@@ -1,15 +1,10 @@
-use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash};
 use std::marker::PhantomData;
-use std::sync::Arc;
 
-use crate::bench::{Collection, CollectionHandle};
-
-type Lock<T> = parking_lot::RwLock<T>;
-//type Lock<T> = parking_lot::Mutex<T>;
+use crate::perf_map::{Collection, CollectionHandle};
 
 #[derive(Clone)]
-pub struct NopCollection<K: Eq + Hash + Send + 'static, V, H: BuildHasher + 'static>(usize, PhantomData<K>, PhantomData<V>, PhantomData<H>);
+pub struct NopCollection<K: Eq + Hash + Send + 'static, V, H: BuildHasher + 'static>(PhantomData<K>, PhantomData<V>, PhantomData<H>);
 
 impl<K, V, H> NopCollection<K, V, H>
 where
@@ -17,12 +12,12 @@ where
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self(capacity, PhantomData, PhantomData, PhantomData)
+    pub fn with_capacity(_capacity: usize) -> Self {
+        Self(PhantomData, PhantomData, PhantomData)
     }
 }
 
-pub struct NopHandle<K: Eq + Hash + Send + 'static, V, H: BuildHasher + 'static>(usize, PhantomData<K>, PhantomData<V>, PhantomData<H>);
+pub struct NopHandle<K: Eq + Hash + Send + 'static, V, H: BuildHasher + 'static>(PhantomData<K>, PhantomData<V>, PhantomData<H>);
 
 impl<K, V, H> NopHandle<K, V, H>
 where
@@ -30,8 +25,8 @@ where
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
-    pub fn new(capacity: usize) -> Self {
-        Self(capacity, PhantomData, PhantomData, PhantomData)
+    pub fn new() -> Self {
+        Self(PhantomData, PhantomData, PhantomData)
     }
 }
 
@@ -44,7 +39,7 @@ where
     type Handle = NopHandle<K, V, H>;
 
     fn pin(&self) -> Self::Handle {
-        Self::Handle::new(self.0.clone())
+        Self::Handle::new()
     }
 
     fn prefill_complete(&self)
@@ -60,19 +55,19 @@ where
 {
     type Key = K;
 
-    fn get(&self, key: &Self::Key) -> bool {
+    fn get(&self, _key: &Self::Key) -> bool {
         true
     }
 
-    fn insert(&self, key: Self::Key) -> bool {
+    fn insert(&self, _key: Self::Key) -> bool {
         true
     }
 
-    fn remove(&self, key: &Self::Key) -> bool {
+    fn remove(&self, _key: &Self::Key) -> bool {
         true
     }
 
-    fn update(&self, key: &Self::Key) -> bool {
+    fn update(&self, _key: &Self::Key) -> bool {
         true
     }
 }

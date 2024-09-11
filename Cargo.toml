@@ -9,6 +9,8 @@ lto = true    # Enables Link Time Optimization for further potential gains
 codegen-units = 1 # Reduces the number of code generation units for better optimization opportunities
 
 [dependencies]
+# bfixmap = { path = "../bfix-map" }
+bfixmap = { git = "https://github.com/ZacWalk/bfix-map.git" }
 affinity = "0.1.2"
 ahash = "0.8.11"
 core_affinity = "0.8.1"
@@ -24,3 +26,4 @@ scc = "2.1.16"
 scopeguard = "1.2.0"
 serde = { version = "1.0.209", features = ["derive"] }
 structopt = "0.3.26"
+winapi = { version = "0.3", features = ["memoryapi"] }

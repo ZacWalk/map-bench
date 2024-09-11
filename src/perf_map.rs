@@ -1,4 +1,3 @@
-use core_affinity::get_core_ids;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
@@ -9,7 +8,8 @@ use std::sync::{
 };
 use std::thread;
 use std::time::Instant;
-use affinity::set_thread_affinity;
+
+use crate::perf::Measurement;
 
 /// A collection that can be benchmarked by bustle.
 ///
@@ -34,20 +34,6 @@ pub trait CollectionHandle {
     fn insert(&self, key: Self::Key) -> bool;
     fn remove(&self, key: &Self::Key) -> bool;
     fn update(&self, key: &Self::Key) -> bool;
-}
-
-#[derive(Debug, Clone, Copy)] // Add these derives if needed for convenience
-pub struct Measurement {
-    pub name : &'static str,
-
-    /// A total number of operations.
-    pub total_ops: u64, // Using u64 as it's likely non-negative
-
-    /// An average value of latency.
-    pub latency: u64, // Using u64 assuming latency is non-negative
-
-    /// A total number of threads.
-    pub thread_count: u64, // Using u64 as thread count is non-negative
 }
 
 #[derive(Clone)] // Allow cloning if needed
@@ -224,19 +210,20 @@ pub fn run_workload<H: Collection>(
 
     collection.prefill_complete();
 
-    //let core_ids = get_core_ids().expect("Failed to get core IDs");
+    // uncomment for core affinity
+    // affinity: let core_ids = get_core_ids().expect("Failed to get core IDs");
 
-    for n in 0..num_threads {        
+    for _ in 0..num_threads {        
         let operations = operations.clone();
         let barrier = barrier.clone();
         let total_milliseconds = total_milliseconds.clone();
         let collection = collection.clone();
         let keys = keys.clone();
-        //let core_id = core_ids[n % core_ids.len()];
-        //let core_id_usize = core_id.id as usize;
+        // affinity: let core_id = core_ids[n % core_ids.len()];
+        // affinity: let core_id_usize = core_id.id as usize;
 
         let handle = thread::spawn(move || {
-            // set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
+            // affinity: set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
             let dict = collection.pin();
             barrier.wait();
             let start = Instant::now();
@@ -270,8 +257,7 @@ pub fn run_workload<H: Collection>(
 
     Measurement {
         name,
-        total_ops: real_total_ops as u64,
-        latency: avg_latency as u64,
+        total: avg_latency as u64,
         thread_count: num_threads as u64,
     }
 }

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use evmap::{ReadHandle, ShallowCopy, WriteHandle};
 
-use crate::bench::{Collection, CollectionHandle};
+use crate::perf_map::{Collection, CollectionHandle};
 
 #[derive(Clone)]
 pub struct EvMeta;
