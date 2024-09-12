@@ -295,11 +295,11 @@ pub fn write_plot(
 
     root.fill(&WHITE)?;
 
-    let (x_max, y_max) = groups
+    let (x_max, y_min, y_max) = groups
         .values()
         .flatten()
         .map(|record| (record.thread_count, record.total))
-        .fold((0, 0), |res, cur| (res.0.max(cur.0), res.1.max(cur.1)));
+        .fold((0, u64::MAX, 0), |res, cur| (res.0.max(cur.0), res.1.min(cur.1), res.1.max(cur.1)));
 
     let mut chart = ChartBuilder::on(&root)
         .margin(10)
@@ -307,7 +307,7 @@ pub fn write_plot(
         .set_label_area_size(LabelAreaPosition::Left, 70)
         .set_label_area_size(LabelAreaPosition::Right, 70)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .build_cartesian_2d(1..x_max, 0..y_max)?;
+        .build_cartesian_2d(1..x_max, y_min - 10..y_max + 10)?;
 
     chart
         .configure_mesh()

@@ -153,8 +153,9 @@ pub(crate) fn run_memory_access_test(
     affinity: bool,
     numa_alloc: bool,
 ) -> perf::Measurement {
+    const TEST_SECONDS : u64 = 1; // 8 MB
     const BLOCK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
-    const TEST_DURATION: Duration = Duration::from_secs(1);
+    const TEST_DURATION: Duration = Duration::from_secs(TEST_SECONDS);
 
     let core_ids = get_core_ids().expect("Failed to get core IDs");
     let results = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
@@ -258,10 +259,11 @@ pub(crate) fn run_memory_access_test(
     let results = results.lock().unwrap();
     let total_reads: u64 = results.iter().map(|m| m.0).sum();
     let total_writes: u64 = results.iter().map(|m| m.1).sum();
+    const NANOS_IN_1_SEC: u64 = 1_000_000_000u64;
 
     perf::Measurement {
         name,
-        total: (total_reads + total_writes) / (thread_count as u64),
+        total: (NANOS_IN_1_SEC * TEST_SECONDS * thread_count as u64)  / (total_reads + total_writes),
         thread_count: thread_count as u64,
     }
 }
