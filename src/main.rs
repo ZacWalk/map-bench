@@ -12,6 +12,7 @@ mod map_adapters;
 mod perf_map;
 mod keys;
 mod perf_mem;
+mod perf_info;
 mod perf_dotnet_data;
 mod perf;
 
@@ -22,23 +23,39 @@ use crate::map_adapters::*;
 //static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
+
+    perf_info::print_cpu_info();
+
     // run_map_op_test(95);
     // run_map_op_test(100);
 
     // run_map_key_test();
 
+    run_memory_read_write_test();
+}
+
+fn run_memory_read_write_test() 
+{
     let mut measurements = Vec::new();
 
-    for i in 1..num_cpus::get() + 1 {
-        let mesurment = perf_mem::run_memory_access_test("normal", i, false);        
+    for i in 1..perf_mem::get_num_cpus() + 1 {
+        let mesurment = perf_mem::run_memory_access_test("normal", i, false, false);        
         println!(
             "Threads {}\tReads+Writes {}",
             mesurment.thread_count, mesurment.total
         );
         measurements.push(mesurment);
     }
-    for i in 1..num_cpus::get() + 1 {
-        let mesurment = perf_mem::run_memory_access_test("affinity", i, false);        
+    for i in 1..perf_mem::get_num_cpus() + 1 {
+        let mesurment = perf_mem::run_memory_access_test("affinity", i, true, false);        
+        println!(
+            "Threads {}\tReads+Writes {}",
+            mesurment.thread_count, mesurment.total
+        );
+        measurements.push(mesurment);
+    }
+    for i in 1..perf_mem::get_num_cpus() + 1 {
+        let mesurment = perf_mem::run_memory_access_test("numa", i, true, true);        
         println!(
             "Threads {}\tReads+Writes {}",
             mesurment.thread_count, mesurment.total
@@ -82,7 +99,7 @@ fn run_map_op_test(read_perc: i32) {
 
     let keys = Arc::new(Keys::new(total_keys));
 
-    for i in 0..num_cpus::get() {
+    for i in 0..perf_mem::get_num_cpus() {
         // Get the number of logical processors
         let config = RunConfig {
             threads: i + 1,
@@ -165,7 +182,7 @@ fn run_map_key_test() {
     let keys1 = Arc::new(Keys::new(total_keys));
     let keys2 = Arc::new(Keys::new(total_keys));
 
-    for i in 0..num_cpus::get() {
+    for i in 0..perf_mem::get_num_cpus() {
         // Get the number of logical processors
         let config = RunConfig {
             threads: i + 1,
@@ -264,8 +281,9 @@ pub fn write_plot(
     color_map.insert("scc str", GREEN);
     color_map.insert("bfix u64", RED);
     color_map.insert("bfix str", MAGENTA);
-    color_map.insert("normal", BLUE);
+    color_map.insert("normal", RED);
     color_map.insert("affinity", GREEN);
+    color_map.insert("numa", BLUE);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);

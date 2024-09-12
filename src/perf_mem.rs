@@ -1,48 +1,198 @@
-use affinity::set_thread_affinity;
-use core_affinity::get_core_ids;
 use rand::Rng;
-use std::ptr::null_mut;
+use winapi::shared::minwindef::DWORD;
+use winapi::shared::winerror::ERROR_INSUFFICIENT_BUFFER;
+use winapi::um::winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS};
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
+use std::ptr::{self, null_mut};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use winapi::um::memoryapi::{VirtualAlloc, VirtualFree};
-use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE};
+use winapi::um::errhandlingapi::GetLastError;
+use winapi::um::memoryapi::{VirtualAlloc, VirtualAllocExNuma, VirtualFree};
+use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentThread};
+use winapi::um::processtopologyapi::SetThreadGroupAffinity;
+use winapi::um::sysinfoapi::{ GetSystemInfo, SYSTEM_INFO, };
+use winapi::um::winnt::{
+    RelationNumaNode, RelationProcessorCore, GROUP_AFFINITY, HANDLE, MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, SYSTEM_LOGICAL_PROCESSOR_INFORMATION, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX
+};
 
 use crate::perf;
+use crate::perf_info::{get_last_error_message, GetLogicalProcessorInformationEx};
+
+#[derive(Copy, Clone)]
+struct ProcessorInfo {
+    processor_group: u16,
+    processor_mask: usize,
+    numa_node_num: u32,
+}
 
 
-pub(crate) fn run_memory_access_test(name : &'static str, thread_count: usize, affinity : bool) -> perf::Measurement {
+fn set_thread_affinity(core: &ProcessorInfo) -> Result<(), String> {
+    let current_thread: HANDLE = unsafe { GetCurrentThread() };
+    if current_thread.is_null() {
+        return Err("Failed to get current thread handle".to_string());
+    }
+
+    let mut group_mask: GROUP_AFFINITY = unsafe { std::mem::zeroed() };
+    group_mask.Mask = core.processor_mask;
+    group_mask.Group = core.processor_group;
+
+    let result = unsafe { SetThreadGroupAffinity(current_thread, &group_mask, ptr::null_mut()) };
+
+    if result == 0 {
+        return Err(format!(
+            "Failed to set thread affinity for core {:X}:{:X}: {}",
+            core.processor_mask,
+            core.processor_group,
+            get_last_error_message(),
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn get_num_cpus() -> usize {
+    // Get system information
+    let mut system_info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
+    unsafe { GetSystemInfo(&mut system_info) };
+    return system_info.dwNumberOfProcessors as usize;
+}
+
+
+fn get_core_ids() -> Result<Vec<ProcessorInfo>, String> {
+    // Determine buffer size needed for GetLogicalProcessorInformationEx
+    let mut core_infos = Vec::new();
+    let relationship = RelationNumaNode;
+    let mut buffer = vec![0u8; 1];
+    let mut p_buffer_alloc = buffer.as_ptr();
+    let p_buffer = p_buffer_alloc as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+    let mut cb_buffer: DWORD = 1;
+
+    let result = unsafe {
+        GetLogicalProcessorInformationEx(relationship, p_buffer, &mut cb_buffer)
+    };
+
+    if result != 0 {
+        // Unexpected success
+        return Err(format!("GetLogicalProcessorInformationEx returned nothing successfully."));
+    }
+
+    let error = unsafe { GetLastError() };
+
+    if error != ERROR_INSUFFICIENT_BUFFER {
+        return Err(format!(
+            "GetLogicalProcessorInformationEx returned error (1). GetLastError() = {}",
+            error
+        ));
+    }
+
+    // Allocate buffer
+    let mut buffer = vec![0u8; cb_buffer as usize];
+    let mut p_buffer_alloc = buffer.as_ptr();
+    let mut p_buffer = p_buffer_alloc as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+
+    let result = unsafe {
+        GetLogicalProcessorInformationEx(relationship, p_buffer, &mut cb_buffer)
+    };
+
+    if result == 0 {
+        return Err(format!(
+            "GetLogicalProcessorInformationEx returned error (2). GetLastError() = {}",
+            get_last_error_message()
+        ));
+    }
+
+    let mut p_cur = p_buffer as *const u8;
+    let p_end = unsafe { p_cur.add(cb_buffer as usize) };
+
+    let mut idx = 0;
+    while p_cur < p_end {
+        let p_buffer_ref = unsafe { &*p_buffer };
+
+        if p_buffer_ref.Relationship == relationship {
+
+            let info = unsafe { &p_buffer_ref.u.NumaNode() };
+
+            let processor_mask = info.GroupMask.Mask;
+            let processor_group = info.GroupMask.Group;
+            let numa_node_num = info.NodeNumber;
+
+            for i in 0..64 {
+                if (processor_mask & (1 << i)) != 0 {
+                    core_infos.push(ProcessorInfo {
+                        processor_group,
+                        processor_mask: 1 << i, 
+                        numa_node_num,
+                    });
+                }
+            }
+        }
+        p_cur = unsafe { p_cur.add(p_buffer_ref.Size as usize) };
+        p_buffer = p_cur as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+        idx += 1;
+    }
+
+    Ok(core_infos)
+}
+
+// fn get_numa_node_for_core(core_id: usize) -> Result<u32, &'static str> {
+//     let mut numa_node: u32 = 0;
+//     let result = unsafe { GetNumaProcessorNode(core_id as u32, &mut numa_node) };
+
+//     if result == 0 {
+//         Err("Failed to get NUMA node for core")
+//     } else {
+//         Ok(numa_node)
+//     }
+// }
+
+pub(crate) fn run_memory_access_test(
+    name: &'static str,
+    thread_count: usize,
+    affinity: bool,
+    numa_alloc: bool,
+) -> perf::Measurement {
     const BLOCK_SIZE: usize = 8 * 1024 * 1024; // 8 MB
     const TEST_DURATION: Duration = Duration::from_secs(1);
 
     let core_ids = get_core_ids().expect("Failed to get core IDs");
-    let results = Arc::new(Mutex::new(Vec::<(u64,u64)>::new()));
+    let results = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
     let barrier = Arc::new(Barrier::new(thread_count + 1));
 
     // Create and run threads
     let mut handles = vec![];
     for n in 0..thread_count {
-
         let core_id = core_ids[n % core_ids.len()];
-        let core_id_usize = core_id.id as usize;
         let results_clone = Arc::clone(&results);
         let barrier = barrier.clone();
 
         let handle = thread::spawn(move || {
-
-            if (affinity)
-            {
-                set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
+            if (affinity) {
+                set_thread_affinity(&core_id).expect("Failed to set thread affinity");
             }
 
             // Allocate memory for this thread using VirtualAlloc
-            let memory_block_ptr = unsafe {
-                VirtualAlloc(
-                    null_mut(),
-                    BLOCK_SIZE,
-                    MEM_COMMIT | MEM_RESERVE,
-                    PAGE_READWRITE,
-                )
+            let memory_block_ptr = if numa_alloc {
+                unsafe {
+                    VirtualAllocExNuma(
+                        GetCurrentProcess(), // Allocate in the current process
+                        ptr::null_mut(),     // Let the system choose the base address
+                        BLOCK_SIZE,
+                        winapi::um::winnt::MEM_COMMIT | winapi::um::winnt::MEM_RESERVE,
+                        winapi::um::winnt::PAGE_READWRITE,
+                        core_id.numa_node_num, // Specify the desired NUMA node
+                    )
+                }
+            } else {
+                unsafe {
+                    VirtualAlloc(
+                        null_mut(),
+                        BLOCK_SIZE,
+                        MEM_COMMIT | MEM_RESERVE,
+                        PAGE_READWRITE,
+                    )
+                }
             };
 
             if memory_block_ptr.is_null() {
