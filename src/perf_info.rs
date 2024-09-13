@@ -1,9 +1,10 @@
 use std::ffi::{c_void, OsString};
+use std::fs::File;
+use std::io::Write;
 use std::mem::{size_of, transmute};
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{self, null_mut, NonNull};
 
-use winapi::shared::basetsd::ULONG_PTR;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::ERROR_INSUFFICIENT_BUFFER;
 use winapi::um::errhandlingapi::GetLastError;
@@ -51,16 +52,12 @@ fn yesno(b: bool) -> &'static str {
     }
 }
 
-fn print_bitmap(mask: ULONG_PTR) {
-    for i in (0..size_of::<ULONG_PTR>() * 8).rev() {
-        print!("{}", (mask >> i) & 1);
+fn format_bitmap(mask: usize) -> String {  // Assuming ULONG_PTR is usize
+    let mut result = String::new();
+    for i in (0..size_of::<usize>() * 8).rev() {
+        result.push_str(&format!("{}", (mask >> i) & 1));
     }
-}
-
-fn print_group_affinity(affinity: &GROUP_AFFINITY) {
-    print!(" Group #{} = ", affinity.Group);
-    print_bitmap(affinity.Mask);
-    println!();
+    result
 }
 
 #[link(name = "kernel32")]
@@ -72,7 +69,11 @@ extern "system" {
     ) -> u32; // Returns BOOL (which is an alias for i32)
 }
 
-pub fn print_cpu_info() {
+pub fn write_cpu_info() {
+
+    let mut file = File::create("processor.info.txt").expect("Failed to create file");
+
+
     let mut buffer = vec![0u8; 1];
     let mut p_buffer_alloc = buffer.as_ptr();
     let p_buffer = p_buffer_alloc as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
@@ -84,11 +85,11 @@ pub fn print_cpu_info() {
 
     if result != 0 {
         // Unexpected success
-        println!("GetLogicalProcessorInformationEx returned nothing successfully.");
+        writeln!(file, "GetLogicalProcessorInformationEx returned nothing successfully.");
         return;
     }
 
-    println!(
+    writeln!(file, 
         "GetLogicalProcessorInformationEx needs {} byte data.",
         cb_buffer
     );
@@ -96,7 +97,7 @@ pub fn print_cpu_info() {
     let error = unsafe { GetLastError() };
 
     if error != ERROR_INSUFFICIENT_BUFFER {
-        println!(
+        writeln!(file, 
             "GetLogicalProcessorInformationEx returned error (1). GetLastError() = {}",
             error
         );
@@ -113,14 +114,14 @@ pub fn print_cpu_info() {
     };
 
     if result == 0 {
-        println!(
+        writeln!(file, 
             "GetLogicalProcessorInformationEx returned error (2). GetLastError() = {}",
             get_last_error_message()
         );
         return;
     }
 
-    println!(
+    writeln!(file, 
         "GetLogicalProcessorInformationEx returned {} byte data.",
         cb_buffer
     );
@@ -131,8 +132,6 @@ pub fn print_cpu_info() {
     let mut idx = 0;
     while p_cur < p_end {
         let p_buffer_ref = unsafe { &*p_buffer };
-        println!();
-        println!("Info #{}:", idx);
 
         let relationship_list = [
             "ProcessorCore",
@@ -147,8 +146,8 @@ pub fn print_cpu_info() {
             "(reserved)"
         };
 
-        println!(
-            " Relationship = {} ({})",
+        writeln!(file, 
+            "{} ({}) ",
             relationship_str, p_buffer_ref.Relationship
         );
 
@@ -156,21 +155,22 @@ pub fn print_cpu_info() {
             RelationProcessorCore | RelationProcessorPackage => {
                 let info = unsafe { &p_buffer_ref.u.Processor() };
                 if p_buffer_ref.Relationship == RelationProcessorCore {
-                    println!(
-                        " SMT Support = {}",
+                    writeln!(file, 
+                        " SMT Support: {}",
                         yesno(info.Flags == winapi::um::winnt::LTP_PC_SMT)
                     );
-                    println!(" Efficiency Class = {}", info.EfficiencyClass);
+                    writeln!(file, " Efficiency Class: {}", info.EfficiencyClass);
                 }
-                println!(" GroupCount = {}", info.GroupCount);
+                writeln!(file, " GroupCount {}", info.GroupCount);
                 for i in 0..info.GroupCount {
-                    print_group_affinity(unsafe { &info.GroupMask[i as usize] });
+                    let g = unsafe { &info.GroupMask[i as usize] };
+                    writeln!(file, " Group #{} = {}", g.Group, format_bitmap(g.Mask));
                 }
             }
             RelationNumaNode => {
                 let info = unsafe { &p_buffer_ref.u.NumaNode() };
-                println!(" Numa Node Number = {}", info.NodeNumber);
-                print_group_affinity(&info.GroupMask);
+                writeln!(file, " Numa Node: {}", info.NodeNumber);
+                writeln!(file, " Group #{} = {}", info.GroupMask.Group, format_bitmap(info.GroupMask.Mask));
             }
             RelationCache => {
                 let info = unsafe { &p_buffer_ref.u.Cache() };
@@ -180,33 +180,34 @@ pub fn print_cpu_info() {
                 } else {
                     "(reserved)"
                 };
-                println!(" Type = L{} {}", info.Level, cachetype_str);
-                print!(" Assoc = ");
+                writeln!(file, " L{} {}", info.Level, cachetype_str);
+                writeln!(file, " Assoc: ");
                 if info.Associativity == 0xff {
-                    println!("full");
+                    writeln!(file, "full");
                 } else {
-                    println!("{}", info.Associativity);
+                    writeln!(file, "{}", info.Associativity);
                 }
-                println!(" Line Size = {}B", info.LineSize);
-                println!(" Cache Size = {}KB", info.CacheSize / 1024);
-                print_group_affinity(&info.GroupMask);
+                writeln!(file, " Line Size = {}B", info.LineSize);
+                writeln!(file, " Cache Size = {}KB", info.CacheSize / 1024);
+                writeln!(file, " Group #{} = {}", info.GroupMask.Group, format_bitmap(info.GroupMask.Mask));
             }
             RelationGroup => {
                 let info = unsafe { &p_buffer_ref.u.Group() };
-                println!(" Max Group Count = {}", info.MaximumGroupCount);
-                println!(" Active Group Count = {}", info.ActiveGroupCount);
+                writeln!(file, " Max Group Count = {}", info.MaximumGroupCount);
+                writeln!(file, " Active Group Count = {}", info.ActiveGroupCount);
                 for i in 0..info.ActiveGroupCount {
                     let ginfo = unsafe { &info.GroupInfo[i as usize] };
-                    println!(" Group #{}:", i);
-                    println!("  Max Processor Count = {}", ginfo.MaximumProcessorCount);
-                    println!("  Active Processor Count = {}", ginfo.ActiveProcessorCount);
-                    print!("  Active Processor Mask = ");
-                    print_bitmap(ginfo.ActiveProcessorMask);
-                    println!();
+                    writeln!(file, " Group #{}:", i);
+                    writeln!(file, "  Max Processor Count = {}", ginfo.MaximumProcessorCount);
+                    writeln!(file, "  Active Processor Count = {}", ginfo.ActiveProcessorCount);
+                    writeln!(file, "  Active Processor Mask = ");
+                    writeln!(file, "  Mask = {}", format_bitmap(ginfo.ActiveProcessorMask));
                 }
             }
             _ => {} // Handle other or reserved relationships if needed
         }
+
+        writeln!(file, );
 
         p_cur = unsafe { p_cur.add(p_buffer_ref.Size as usize) };
         p_buffer = p_cur as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;

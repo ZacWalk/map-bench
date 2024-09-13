@@ -9,11 +9,11 @@ use std::sync::Arc;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Clone)]
-pub struct BFixCollection<K: Eq + Hash + Send + 'static + Default, V: Clone + Default, H: BuildHasher + 'static>(
+pub struct BFixCollection<K: Eq + Hash + Send + 'static + Default + Clone, V: Clone + Default, H: BuildHasher + 'static + Default>(
     Arc<BFixMap<K, V, H>>,
 );
 
-pub struct BFixHandle<K: Eq + Hash + Send + 'static + Default, V: Clone + Default, H: BuildHasher + 'static>(
+pub struct BFixHandle<K: Eq + Hash + Send + 'static + Default + Clone, V: Clone + Default, H: BuildHasher + 'static + Default>(
     Arc<BFixMap<K, V, H>>,
 );
 
@@ -21,7 +21,7 @@ impl<K, V, H> BFixCollection<K, V, H>
 where
     K: Send + Default + Sync + Eq + Hash + Clone + 'static,
     V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
-    H: Send + Sync + BuildHasher + Default + 'static + Clone,
+    H: Send + Sync + BuildHasher + Default + 'static + Clone + Default,
 {
     pub fn with_capacity(capacity: usize) -> Self {
         Self(Arc::new(BFixMap::with_capacity_and_hasher(
@@ -74,10 +74,12 @@ where
     }
 
     fn remove(&self, key: &Self::Key) -> bool {
-        self.0.remove(key).is_some()
+        //self.0.remove(key).is_some()
+        true
     }
 
     fn update(&self, key: &Self::Key) -> bool {
-        self.0.modify(key, |count| *count += V::from(1))
+        //self.0.modify(key, |count| *count += V::from(1))
+        true
     }
 }

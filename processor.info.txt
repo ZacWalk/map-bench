@@ -1,0 +1,299 @@
+GetLogicalProcessorInformationEx needs 2344 byte data.
+GetLogicalProcessorInformationEx returned 2344 byte data.
+ProcessorPackage (3) 
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000001111111111111111
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000000011
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000000011
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000000011
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000000011
+
+Cache (2) 
+ L3 Unified
+ Assoc: 
+16
+ Line Size = 64B
+ Cache Size = 16384KB
+ Group #0 = 0000000000000000000000000000000000000000000000001111111111111111
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000001100
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000001100
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000001100
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000001100
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000110000
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000110000
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000110000
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000000110000
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000000000011000000
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000011000000
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000011000000
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000000011000000
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000000001100000000
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000001100000000
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000001100000000
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000001100000000
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000000110000000000
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000110000000000
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000110000000000
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000000110000000000
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000000011000000000000
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000000011000000000000
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000000011000000000000
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000000011000000000000
+
+ProcessorCore (0) 
+ SMT Support: yes
+ Efficiency Class: 0
+ GroupCount 1
+ Group #0 = 0000000000000000000000000000000000000000000000001100000000000000
+
+(reserved) (7) 
+ Max Group Count = 0
+ Active Group Count = 0
+
+Cache (2) 
+ L1 Data
+ Assoc: 
+12
+ Line Size = 64B
+ Cache Size = 48KB
+ Group #0 = 0000000000000000000000000000000000000000000000001100000000000000
+
+Cache (2) 
+ L1 Instruction
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 32KB
+ Group #0 = 0000000000000000000000000000000000000000000000001100000000000000
+
+Cache (2) 
+ L2 Unified
+ Assoc: 
+8
+ Line Size = 64B
+ Cache Size = 512KB
+ Group #0 = 0000000000000000000000000000000000000000000000001100000000000000
+
+NumaNode (1) 
+ Numa Node: 0
+ Group #0 = 0000000000000000000000000000000000000000000000001111111111111111
+
+Group (4) 
+ Max Group Count = 1
+ Active Group Count = 1
+ Group #0:
+  Max Processor Count = 16
+  Active Processor Count = 16
+  Active Processor Mask = 
+  Mask = 0000000000000000000000000000000000000000000000001111111111111111
+

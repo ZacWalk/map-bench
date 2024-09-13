@@ -111,8 +111,18 @@ impl Mix {
         }
     }
 
+    pub fn read_99() -> Self {
+        Self {
+            read: 99,
+            insert: 1,
+            update: 0,
+            remove: 0,
+            upsert: 0,
+        }
+    }
+
     /// Constructs a read-only workload.
-    pub fn read_only() -> Self {
+    pub fn read_100() -> Self {
         Self {
             read: 100,
             insert: 0,
@@ -135,11 +145,13 @@ impl Mix {
     }
 }
 
-#[derive(Debug, Clone, Copy)] // Add these derives for convenience if needed
-pub struct RunConfig {
-    pub threads: usize,
+#[derive(Debug, Clone)] // Add these derives for convenience if needed
+pub struct RunConfig<'a> {
+    pub thread_count: usize,
     pub total_ops: usize,
-    pub prefill: usize,
+    pub prefill: usize,    
+    pub operations: &'a Vec<Operation>,
+    pub keys_needed_per_thread : usize,
 }
 fn run_ops<H: CollectionHandle>(
     dict: &H, // Assuming you have a ConcurrentDictionary type
@@ -182,24 +194,20 @@ fn run_ops<H: CollectionHandle>(
     total_success
 }
 
-pub fn run_workload<H: Collection>(
-    name : &'static str,
+pub fn run_workload<'a, H: Collection>(
+    name : &'a str,
     collection: Arc<H>,
-    operations: Vec<Operation>,
-    config: RunConfig,
-    keys: Arc<Keys<<<H as Collection>::Handle as CollectionHandle>::Key>>,
-    keys_needed_per_thread : usize,
-) -> Measurement {
-    let num_threads = config.threads;
+    config: &RunConfig,
+    keys: &'a Arc<Keys<<<H as Collection>::Handle as CollectionHandle>::Key>>,
+) -> Measurement<'a> {
+    let num_threads = config.thread_count;
 
-    println!("start {} threads", num_threads);
+    print!("Map {name:8} (threads {num_threads:>3}) ... ");
 
     let barrier = Arc::new(Barrier::new(num_threads + 1));
     let mut thread_handles = Vec::with_capacity(num_threads);
     let ops_per_thread = config.total_ops / num_threads;
     let total_milliseconds = Arc::new(AtomicUsize::new(0));
-
-    println!("prefill {}", config.prefill);
 
     keys.reset();
     let mut new_keys = keys.alloc_n(config.prefill).iter().cycle();
@@ -214,7 +222,8 @@ pub fn run_workload<H: Collection>(
     // affinity: let core_ids = get_core_ids().expect("Failed to get core IDs");
 
     for _ in 0..num_threads {        
-        let operations = operations.clone();
+        let operations = config.operations.clone();
+        let keys_needed_per_thread = config.keys_needed_per_thread;
         let barrier = barrier.clone();
         let total_milliseconds = total_milliseconds.clone();
         let collection = collection.clone();
@@ -250,14 +259,11 @@ pub fn run_workload<H: Collection>(
     let real_total_ops = ops_per_thread * num_threads;
     let avg_latency = (total_milliseconds * 1_000_000) / real_total_ops;
 
-    println!(
-        "config complete in {} milliseconds (ops: {}, avg: {} ns)",
-        total_milliseconds, real_total_ops, avg_latency
-    );
+    println!("avg: {:>3} ns", avg_latency);
 
     Measurement {
         name,
-        total: avg_latency as u64,
+        latency: avg_latency as u64,
         thread_count: num_threads as u64,
     }
 }
