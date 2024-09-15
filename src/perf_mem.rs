@@ -164,7 +164,7 @@ pub(crate) fn run_memory_access_test(
     const BLOCK_SIZE: usize = 8 * 1024 * 1024;
     const TEST_DURATION: Duration = Duration::from_secs(TEST_SECONDS);
 
-    print!("Map {name:8} (threads {thread_count:>3}) ... ");
+    print!("Mem {name:8} (threads {thread_count:>3}) ... ");
 
     let core_info = get_core_info().expect("Failed to get core IDs");
     let results = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));

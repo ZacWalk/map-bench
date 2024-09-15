@@ -6,8 +6,12 @@ use crate::perf_map::{Collection, CollectionHandle};
 
 #[derive(Clone)]
 pub struct SccCollection<K, V, H: BuildHasher>(
-    Arc<scc::HashMap<K, V, H>>,
-);
+    scc::HashMap<K, V, H>,
+
+)where
+K: Send + Sync + Eq + Hash + Clone + 'static,
+V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+H: Send + Sync + BuildHasher + Default + 'static + Clone;
 
 impl<K, V, H> SccCollection<K, V, H>
 where
@@ -17,10 +21,10 @@ where
 {
     pub fn with_capacity(capacity: usize) -> Self {
         scc::ebr::Guard::new().accelerate();
-        Self(Arc::new(scc::HashMap::with_capacity_and_hasher(
+        Self(scc::HashMap::with_capacity_and_hasher(
             capacity,
             H::default(),
-        )))
+        ))
     }
 }
 
@@ -50,7 +54,7 @@ where
     type Handle = SccHandle<K, V, H>;
 
     fn pin(&self) -> Self::Handle {
-        Self::Handle::new((*self.0).clone())
+        Self::Handle::new(self.0.clone())
     }
 
     fn prefill_complete(&self)
@@ -67,7 +71,7 @@ where
     type Key = K;
 
     fn get(&self, key: &Self::Key) -> bool {
-        self.0.read(&key, |_, _| ()).is_some()
+        self.0.read(&key, |_, v| v.clone()).is_some()
     }
 
     fn insert(&self, key: Self::Key) -> bool {

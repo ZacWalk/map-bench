@@ -88,12 +88,20 @@ fn run_map_op_test(spec: Mix) {
             prefill,
         };
 
-        let scc = Arc::new(SccCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
-        measurements.push(perf_map::run_workload(&"scc", scc, &config, &keys));
+        let m = Arc::new(SccCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        measurements.push(perf_map::run_workload(&"scc", m, &config, &keys));
 
-        let bfix =
+        let m =
             Arc::new(BFixCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
-        measurements.push(perf_map::run_workload(&"bfix", bfix, &config, &keys));
+        measurements.push(perf_map::run_workload(&"bfix", m, &config, &keys));
+
+        // let m =
+        //     Arc::new(StdHashMapCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        // measurements.push(perf_map::run_workload(&"std", m, &config, &keys));
+
+        let m =
+            Arc::new(NopCollection::<u64, u64, ahash::RandomState>::with_capacity(capacity));
+        measurements.push(perf_map::run_workload(&"nop", m, &config, &keys));
     }
 
     write_plot(
@@ -175,6 +183,7 @@ pub fn write_plot(
     color_map.insert("ev", GREEN);
     color_map.insert("scc", BLUE);
     color_map.insert("nop", CYAN);
+    color_map.insert("std", MAGENTA);
     color_map.insert("scc u64", RGBColor(10, 10, 240));
     color_map.insert("scc str", RGBColor(10, 10, 180));
     color_map.insert("bfix u64", RGBColor(10, 240, 10));
@@ -193,19 +202,21 @@ pub fn write_plot(
 
     root.fill(&WHITE)?;
 
-    let y_min = records.iter().map(|m| m.latency).min().unwrap();
+    let y_padding = 10;
+    let y_min = records.iter().map(|m| m.latency).min().unwrap().max(y_padding);
     let y_max = records.iter().map(|m| m.latency).max().unwrap();
 
     let x_min = records.iter().map(|m| m.thread_count).min().unwrap();
     let x_max = records.iter().map(|m| m.thread_count).max().unwrap();
 
+    
     let mut chart = ChartBuilder::on(&root)
         .margin(10)
         .caption(caption, (FONT, 20))
         .set_label_area_size(LabelAreaPosition::Left, 70)
         .set_label_area_size(LabelAreaPosition::Right, 70)
         .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .build_cartesian_2d(1..x_max, y_min - 10..y_max + 10)?;
+        .build_cartesian_2d(1..x_max, y_min - y_padding..y_max + y_padding)?;
 
     chart
         .configure_mesh()
