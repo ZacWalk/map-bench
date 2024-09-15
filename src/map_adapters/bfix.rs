@@ -144,21 +144,18 @@ where
     type Key = K;
 
     fn get(&self, key: &Self::Key) -> bool {
-        // self.0.get(&key, |v| v.clone()).is_some()
         self.0.get(&key, |v| v.clone()).is_some()
     }
 
     fn insert(&self, key: Self::Key) -> bool {
-        self.0.insert(key, V::default()).is_none()
+        self.0.insert(key, V::default()).unwrap().is_none()
     }
 
     fn remove(&self, key: &Self::Key) -> bool {
-        //self.0.remove(key).is_some()
-        true
+        self.0.remove(key).is_some()
     }
 
     fn update(&self, key: &Self::Key) -> bool {
-        //self.0.modify(key, |count| *count += V::from(1))
-        true
+        self.0.modify(key, |v| { *v += V::from(1); true }).is_some()
     }
 }
