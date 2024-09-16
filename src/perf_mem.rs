@@ -222,16 +222,13 @@ pub(crate) fn run_memory_access_test(
                 panic!("Failed to allocate memory");
             }
 
-            // Create a slice from the raw pointer (unsafe)
-            let memory_block: &mut [u8] =
-                unsafe { std::slice::from_raw_parts_mut(memory_block_ptr as *mut u8, BLOCK_SIZE) };
+            // place an array on that memory
+            let mut u64_array = unsafe {
+                std::slice::from_raw_parts_mut(memory_block_ptr as *mut u64, BLOCK_SIZE / std::mem::size_of::<u64>())
+            };
 
             // Fill the memory block with random u64 values
             let mut rng = rand::thread_rng();
-            for chunk in memory_block.chunks_exact_mut(8) {
-                let random_u64: u64 = rng.gen();
-                chunk.copy_from_slice(&random_u64.to_le_bytes());
-            }
 
             barrier.wait();
 
@@ -243,17 +240,15 @@ pub(crate) fn run_memory_access_test(
                 // 50% chance of read, 50% chance of write
                 if rng.gen_bool(0.5) {
                     // Read
-                    let random_index = (rng.gen_range(0..(BLOCK_SIZE / 8)) * 8) as usize;
-                    let value_bytes = &memory_block[random_index..random_index + 8];
-                    let value = u64::from_le_bytes(value_bytes.try_into().unwrap());
+                    let random_index = rng.gen_range(0..u64_array.len()) as usize;
+                    let value = u64_array[random_index];
                     std::hint::black_box(value);
                     reads_performed += 1;
                 } else {
                     // Write
-                    let random_index = (rng.gen_range(0..(BLOCK_SIZE / 8)) * 8) as usize;
+                    let random_index = rng.gen_range(0..u64_array.len()) as usize;
                     let new_value: u64 = rng.gen();
-                    memory_block[random_index..random_index + 8]
-                        .copy_from_slice(&new_value.to_le_bytes());
+                    u64_array[random_index] = new_value;
                     writes_performed += 1;
                 }
             }

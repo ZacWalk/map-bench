@@ -71,7 +71,7 @@ checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 [[package]]
 name = "bfixmap"
 version = "0.1.0"
-source = "git+https://github.com/ZacWalk/bfix-map.git#e5228c6d91ceb1d752dc19d5cc679454c6fc8955"
+source = "git+https://github.com/ZacWalk/bfix-map.git#53c13e11e928b34935c9755c60cc898585881055"
 dependencies = [
  "ahash",
  "parking_lot",
@@ -558,6 +558,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "structopt",
+ "thousands",
  "winapi",
 ]
 
@@ -1002,6 +1003,12 @@ dependencies = [
  "quote",
  "syn 2.0.77",
 ]
+
+[[package]]
+name = "thousands"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3bf63baf9f5039dadc247375c29eb13706706cfde997d0330d05aa63a77d8820"
 
 [[package]]
 name = "ttf-parser"

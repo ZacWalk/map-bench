@@ -24,4 +24,5 @@ scopeguard = "1.2.0"
 serde = { version = "1.0.209", features = ["derive"] }
 structopt = "0.3.26"
 winapi = { version = "0.3.9", features = ["memoryapi", "processtopologyapi"] }
+thousands = "0.2.0"
 

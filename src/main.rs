@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
+use thousands::Separable;
 
 mod keys;
 mod map_adapters;
@@ -24,9 +25,12 @@ use crate::map_adapters::*;
 fn main() {
     perf_info::write_cpu_info();
 
-    run_map_op_test(Mix::read_100());
-    run_map_op_test(Mix::read_99());
-    run_map_key_test(Mix::read_99());
+    run_map_op_test(Mix::read_100(), 1_000_000);
+    run_map_op_test(Mix::read_100(), 10_000);
+    run_map_op_test(Mix::read_99(), 1_000_000);
+    run_map_op_test(Mix::read_99(), 10_000);
+    run_map_key_test(Mix::read_99(), 1_000_000);
+    run_map_key_test(Mix::read_99(), 10_000);
     run_memory_read_write_test();
 }
 
@@ -56,13 +60,13 @@ fn run_memory_read_write_test() {
     .expect("failed to plot");
 }
 
-fn run_map_op_test(spec: Mix) {
-    let operations = spec.to_ops();
-    let capacity = 1_000_000;
-    let total_ops = capacity * 55;
-    let prefill = capacity / 2;
-    let keys_needed_for_inserts = (total_ops * spec.insert / 100) + 1;
-    let total_keys = prefill + keys_needed_for_inserts + 1000; // 1000 needed for some rounding error?
+fn run_map_op_test(spec: Mix, num_start_items : usize) {
+    let operations = spec.to_ops();    
+    let total_ops = 40_000_000;
+    let prefill = num_start_items;
+    let expected_inserts = total_ops * spec.insert / 100;
+    let capacity = num_start_items + expected_inserts;
+    let total_keys = prefill + expected_inserts + 1000; // 1000 needed for some rounding error?
 
     let mut measurements = if spec.read == 100 {
         perf_dotnet_data::PERF_DATA_DOT_NET_100.clone()        
@@ -77,7 +81,7 @@ fn run_map_op_test(spec: Mix) {
 
     for i in 0..perf_mem::get_num_cpus() {
         let thread_count = i + 1;
-        let keys_needed_per_thread = keys_needed_for_inserts / thread_count;
+        let keys_needed_per_thread = expected_inserts / thread_count;
 
         // Get the number of logical processors
         let config = RunConfig {
@@ -106,20 +110,20 @@ fn run_map_op_test(spec: Mix) {
 
     write_plot(
         &measurements,
-        &format!("Latency (read = {}%)", spec.read),
+        &format!("Average ;atency (read = {}%   items = {}+{})", spec.read, prefill.separate_with_commas(), expected_inserts.separate_with_commas()),
         "Latency",
-        &format!("latency{}.svg", spec.read),
+        &format!("latency{}-{}.svg", spec.read, num_start_items),
     )
     .expect("failed to plot");
 }
 
-fn run_map_key_test(spec: Mix) {
+fn run_map_key_test(spec: Mix, num_start_items : usize) {
     let operations = spec.to_ops();
-    let capacity = 1_000_000;
-    let total_ops = capacity * 55;
-    let prefill = capacity / 2;
-    let keys_needed_for_inserts = (total_ops * spec.insert / 100) + 1;
-    let total_keys = prefill + keys_needed_for_inserts + 1000; // 1000 needed for some rounding error?
+    let total_ops = 40_000_000;
+    let prefill = num_start_items;
+    let expected_inserts = total_ops * spec.insert / 100;
+    let capacity = num_start_items + expected_inserts;
+    let total_keys = prefill + expected_inserts + 1000; // 1000 needed for some rounding error?
 
     let mut measurements = Vec::new();
 
@@ -128,7 +132,7 @@ fn run_map_key_test(spec: Mix) {
 
     for i in 0..perf_mem::get_num_cpus() {
         let thread_count = i + 1;
-        let keys_needed_per_thread = keys_needed_for_inserts / thread_count;
+        let keys_needed_per_thread = expected_inserts / thread_count;
 
         let config = RunConfig {
             thread_count: i + 1,
@@ -158,9 +162,9 @@ fn run_map_key_test(spec: Mix) {
 
     write_plot(
         &measurements,
-        &format!("String vs u64 keys latency (read = {}%)", spec.read),
+        &format!("String vs u64 keys latency (read = {}%   items = {}+{})", spec.read, prefill.separate_with_commas(), expected_inserts.separate_with_commas()),
         "Latency",
-        &format!("keys{}.svg", spec.read),
+        &format!("keys{}-{}.svg", spec.read, num_start_items),
     )
     .expect("failed to plot");
 }
