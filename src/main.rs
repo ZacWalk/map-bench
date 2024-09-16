@@ -1,3 +1,8 @@
+use perf::Measurement;
+use perf_dotnet_data::PERF_DATA_DOT_NET_99_10k;
+use perf_dotnet_data::PERF_DATA_DOT_NET_100_10K;
+use perf_dotnet_data::PERF_DATA_DOT_NET_100_1M;
+use perf_dotnet_data::PERF_DATA_DOT_NET_99_1M;
 use perf_map::{Keys, Mix, RunConfig};
 use perf_mem::AffinityType;
 use plotters::prelude::SVGBackend;
@@ -25,10 +30,10 @@ use crate::map_adapters::*;
 fn main() {
     perf_info::write_cpu_info();
 
-    run_map_op_test(Mix::read_100(), 1_000_000);
-    run_map_op_test(Mix::read_100(), 10_000);
-    run_map_op_test(Mix::read_99(), 1_000_000);
-    run_map_op_test(Mix::read_99(), 10_000);
+    run_map_op_test(Mix::read_100(), 1_000_000, &PERF_DATA_DOT_NET_100_1M);
+    run_map_op_test(Mix::read_100(), 10_000, &PERF_DATA_DOT_NET_100_10K);
+    run_map_op_test(Mix::read_99(), 1_000_000, &PERF_DATA_DOT_NET_99_1M);
+    run_map_op_test(Mix::read_99(), 10_000, &PERF_DATA_DOT_NET_99_10k);
     run_map_key_test(Mix::read_99(), 1_000_000);
     run_map_key_test(Mix::read_99(), 10_000);
     run_memory_read_write_test();
@@ -60,7 +65,7 @@ fn run_memory_read_write_test() {
     .expect("failed to plot");
 }
 
-fn run_map_op_test(spec: Mix, num_start_items : usize) {
+fn run_map_op_test(spec: Mix, num_start_items : usize, dot_net : &Vec<Measurement>) {
     let operations = spec.to_ops();    
     let total_ops = 40_000_000;
     let prefill = num_start_items;
@@ -68,14 +73,7 @@ fn run_map_op_test(spec: Mix, num_start_items : usize) {
     let capacity = num_start_items + expected_inserts;
     let total_keys = prefill + expected_inserts + 1000; // 1000 needed for some rounding error?
 
-    let mut measurements = if spec.read == 100 {
-        perf_dotnet_data::PERF_DATA_DOT_NET_100.clone()        
-    } else if spec.read == 99 {
-        // values from C# test run
-        perf_dotnet_data::PERF_DATA_DOT_NET_99.clone()
-    } else {
-        Vec::new()
-    };
+    let mut measurements = dot_net.clone();
 
     let keys = Arc::new(Keys::new(total_keys));
 
@@ -110,7 +108,7 @@ fn run_map_op_test(spec: Mix, num_start_items : usize) {
 
     write_plot(
         &measurements,
-        &format!("Average ;atency (read = {}%   items = {}+{})", spec.read, prefill.separate_with_commas(), expected_inserts.separate_with_commas()),
+        &format!("Average latency (read = {}%   items = {}+{})", spec.read, prefill.separate_with_commas(), expected_inserts.separate_with_commas()),
         "Latency",
         &format!("latency{}-{}.svg", spec.read, num_start_items),
     )
