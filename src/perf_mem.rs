@@ -78,7 +78,6 @@ fn get_core_info() -> Result<CoreInfo, String> {
     let p_buffer = p_buffer_alloc as *mut SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
     let mut cb_buffer: DWORD = 1;
 
-
     let result =
         unsafe { GetLogicalProcessorInformationEx(relationship, p_buffer, &mut cb_buffer) };
 
@@ -150,13 +149,12 @@ fn get_core_info() -> Result<CoreInfo, String> {
     })
 }
 
-#[derive(Clone)] 
+#[derive(Clone)]
 pub(crate) enum AffinityType {
     NoAffinity,
     NumaNodeAffinity,
     NumaMismatch,
 }
-
 
 pub(crate) fn run_memory_access_test(
     name: &str,
@@ -178,7 +176,7 @@ pub(crate) fn run_memory_access_test(
         let core_id = core_info.ids[n % core_info.ids.len()];
         let results_clone = Arc::clone(&results);
         let barrier = barrier.clone();
-        let thread_affinity = affinity.clone(); 
+        let thread_affinity = affinity.clone();
         let num_numa_nodes = core_info.num_numa_nodes as u32;
 
         let handle = thread::spawn(move || {
@@ -227,7 +225,10 @@ pub(crate) fn run_memory_access_test(
 
             // place an array on that memory
             let mut u64_array = unsafe {
-                std::slice::from_raw_parts_mut(memory_block_ptr as *mut u64, BLOCK_SIZE / std::mem::size_of::<u64>())
+                std::slice::from_raw_parts_mut(
+                    memory_block_ptr as *mut u64,
+                    BLOCK_SIZE / std::mem::size_of::<u64>(),
+                )
             };
 
             // Fill the memory block with random u64 values
@@ -293,22 +294,22 @@ pub(crate) fn run_memory_access_test(
     }
 }
 
-
-pub(crate) fn run_fetch_add_test(
-    name: &str,
-    thread_count: usize,
-) -> perf::Measurement {
+pub(crate) fn run_fetch_add_test(name: &str, thread_count: usize) -> perf::Measurement {
     const INCREMENT_COUNT: u64 = 10_000_000;
 
     print!("fetch_add global (threads {thread_count:>3}) ... ");
 
-    let atomic_counter = Arc::new(AtomicU64::new(0));
+    let core_info = get_core_info().expect("Failed to get core IDs");
+    let atomic_counters: Vec<Arc<AtomicU64>> = (0..core_info.num_numa_nodes)
+        .map(|_| Arc::new(AtomicU64::new(0)))
+        .collect();
+
     let barrier = Arc::new(Barrier::new(thread_count + 1));
-    let results = Arc::new(Mutex::new(Vec::<u128>::new())); 
+    let results = Arc::new(Mutex::new(Vec::<u128>::new()));
 
     let mut handles = vec![];
-    for _ in 0..thread_count {
-        let atomic_counter_clone = Arc::clone(&atomic_counter);
+    for i in 0..thread_count {
+        let atomic_counter_clone = Arc::clone(&atomic_counters[i % atomic_counters.len()]);
         let barrier = barrier.clone();
         let results_clone = Arc::clone(&results);
 
@@ -319,7 +320,7 @@ pub(crate) fn run_fetch_add_test(
 
             loop {
                 let current_value = atomic_counter_clone.fetch_add(1, Ordering::SeqCst);
-                if current_value >= INCREMENT_COUNT - 1 { 
+                if current_value >= INCREMENT_COUNT - 1 {
                     let duration = start_time.elapsed();
                     let mut results = results_clone.lock().unwrap();
                     results.push(duration.as_nanos());
@@ -339,20 +340,22 @@ pub(crate) fn run_fetch_add_test(
     }
 
     // Calculate statistics from the results
-    let current_value = atomic_counter.load(Ordering::Acquire);
+    let counter_total: u64 = atomic_counters
+        .iter()
+        .map(|counter| counter.load(Ordering::SeqCst))
+        .sum();
     let results = results.lock().unwrap();
     let total_duration: u128 = results.iter().sum();
-    let average_duration = total_duration / current_value as u128;
+    let average_duration = total_duration / counter_total as u128;
 
     println!("avg: {} ns", average_duration);
 
     perf::Measurement {
         name,
-        latency: average_duration as u64, 
+        latency: average_duration as u64,
         thread_count: thread_count as u64,
     }
 }
-
 
 fn allocate_atomic_u64_on_numa_nodes(num_numa_nodes: usize) -> Vec<*mut AtomicU64> {
     (0..num_numa_nodes)
@@ -373,17 +376,16 @@ fn allocate_atomic_u64_on_numa_nodes(num_numa_nodes: usize) -> Vec<*mut AtomicU6
             }
 
             let atomic_u64_ptr = ptr as *mut AtomicU64;
-            unsafe { (*atomic_u64_ptr).store(0, Ordering::Relaxed); } // Initialize to 0
+            unsafe {
+                (*atomic_u64_ptr).store(0, Ordering::Relaxed);
+            } // Initialize to 0
 
             atomic_u64_ptr
         })
         .collect()
 }
 
-pub(crate) fn run_numa_fetch_add_test(
-    name: &str,
-    thread_count: usize,
-) -> perf::Measurement {
+pub(crate) fn run_numa_fetch_add_test(name: &str, thread_count: usize) -> perf::Measurement {
     const INCREMENT_COUNT: u64 = 10_000_000;
 
     print!("fetch_add numa (threads {thread_count:>3}) ... ");
@@ -400,12 +402,13 @@ pub(crate) fn run_numa_fetch_add_test(
     for thread_index in 0..thread_count {
         let core_id = core_info.ids[thread_index % core_info.ids.len()];
         let numa_node = core_id.numa_node_num as usize;
-        let counter_as_usize  = unsafe { transmute::<*mut AtomicU64, usize>(atomic_counters[numa_node]) }; 
+        let counter_as_usize =
+            unsafe { transmute::<*mut AtomicU64, usize>(atomic_counters[numa_node]) };
         let barrier = barrier.clone();
         let results_clone = Arc::clone(&results);
 
         let handle = thread::spawn(move || {
-            set_thread_affinity(&core_id).expect("Failed to set thread affinity"); 
+            set_thread_affinity(&core_id).expect("Failed to set thread affinity");
             let counter_ptr = unsafe { transmute::<usize, *mut AtomicU64>(counter_as_usize) };
 
             barrier.wait();
@@ -413,7 +416,7 @@ pub(crate) fn run_numa_fetch_add_test(
             let start_time = Instant::now();
 
             loop {
-                let current_value = (unsafe { &*counter_ptr }).fetch_add(1, Ordering::SeqCst); 
+                let current_value = (unsafe { &*counter_ptr }).fetch_add(1, Ordering::SeqCst);
                 if current_value >= INCREMENT_COUNT - 1 {
                     let duration = start_time.elapsed();
                     let mut results = results_clone.lock().unwrap();
@@ -433,12 +436,10 @@ pub(crate) fn run_numa_fetch_add_test(
         handle.join().unwrap();
     }
 
-    let mut counter_total = 0;
-
-    // Calculate statistics (ensure all counters reached the target)
-    for counter in &atomic_counters {
-        counter_total += unsafe { (**counter).load(Ordering::SeqCst) }; 
-    }
+    let counter_total: u64 = atomic_counters
+        .iter()
+        .map(|counter| unsafe { (**counter).load(Ordering::SeqCst) })
+        .sum();
 
     let results = results.lock().unwrap();
     let total_duration: u128 = results.iter().sum();
