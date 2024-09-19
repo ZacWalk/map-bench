@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash};
 use std::sync::Arc;
 
-use crate::perf_map::{Collection, CollectionHandle};
+use crate::perf_map::{Collection, CollectionHandle, FromU64, ValueModifier};
 
 type Lock<T> = parking_lot::RwLock<T>;
 //type Lock<T> = parking_lot::Mutex<T>;
@@ -14,8 +14,8 @@ pub struct StdHashMapCollection<K: Eq + Hash + Send + 'static, V, H: BuildHasher
 
 impl<K, V, H> StdHashMapCollection<K, V, H>
 where
-    K: Send + Sync + Eq + Hash + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Eq + Hash + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
     pub fn with_capacity(capacity: usize) -> Self {
@@ -32,8 +32,8 @@ pub struct StdHashMapHandle<K: Eq + Hash + Send + 'static, V, H: BuildHasher + '
 
 impl<K, V, H> StdHashMapHandle<K, V, H>
 where
-    K: Send + Sync + Eq + Hash + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Eq + Hash + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
     pub fn new(m: Arc<Lock<HashMap<K, V, H>>>) -> Self {
@@ -43,8 +43,8 @@ where
 
 impl<K, V, H> Collection for StdHashMapCollection<K, V, H>
 where
-    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Hash + Ord + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
     type Handle = StdHashMapHandle<K, V, H>;
@@ -60,8 +60,8 @@ where
 
 impl<K, V, H> CollectionHandle for StdHashMapHandle<K, V, H>
 where
-    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Hash + Ord + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
     type Key = K;
@@ -82,7 +82,7 @@ where
         let mut w = self.0.write();
 
         if let Some(v) = w.get_mut(&key) {
-            *v += V::from(1);
+            v.modify();
             true
         } else {
             false

@@ -1,7 +1,7 @@
 use std::hash::{BuildHasher, Hash};
 use std::sync::Arc;
 
-use crate::perf_map::{Collection, CollectionHandle};
+use crate::perf_map::{Collection, CollectionHandle, FromU64, ValueModifier};
 
 
 #[derive(Clone)]
@@ -9,14 +9,14 @@ pub struct SccCollection<K, V, H: BuildHasher>(
     scc::HashMap<K, V, H>,
 
 )where
-K: Send + Sync + Eq + Hash + Clone + 'static,
-V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+K: Send + Sync + Eq + Hash + Clone + FromU64 + 'static,
+V: Send + Sync + Clone + Default + ValueModifier + 'static,
 H: Send + Sync + BuildHasher + Default + 'static + Clone;
 
 impl<K, V, H> SccCollection<K, V, H>
 where
-    K: Send + Sync + Eq + Hash + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Eq + Hash + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
     pub fn with_capacity(capacity: usize) -> Self {
@@ -34,8 +34,8 @@ pub struct SccHandle<K, V, H: BuildHasher>(
 
 impl<K, V, H> SccHandle<K, V, H>
 where
-    K: Send + Sync + Eq + Hash + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Eq + Hash + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: Send + Sync + BuildHasher + Default + 'static + Clone,
 {
     pub fn new(m: scc::HashMap<K, V, H>) -> Self {
@@ -47,8 +47,8 @@ where
 
 impl<K, V, H> Collection for SccCollection<K, V, H>
 where
-    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Hash + Ord + Clone + FromU64 + 'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
     type Handle = SccHandle<K, V, H>;
@@ -64,8 +64,8 @@ where
 
 impl<K, V, H> CollectionHandle for SccHandle<K, V, H>
 where
-    K: Send + Sync + From<u64> + Hash + Ord + Clone + 'static,
-    V: Send + Sync + Clone + Default + std::ops::AddAssign + From<u64> + 'static,
+    K: Send + Sync + Hash + Ord + Clone + FromU64 +  'static,
+    V: Send + Sync + Clone + Default + ValueModifier + 'static,
     H: BuildHasher + Default + Send + Sync + Clone + 'static,
 {
     type Key = K;
@@ -83,7 +83,7 @@ where
     }
 
     fn update(&self, key: &Self::Key) -> bool {
-        self.0.update(&key, |_, v| *v += V::from(1)).is_some()
+        self.0.update(&key, |_, v| v.modify()).is_some()
     }
 }
 

@@ -13,7 +13,6 @@ use std::error::Error;
 use std::sync::Arc;
 use thousands::Separable;
 
-mod keys;
 mod map_adapters;
 mod perf;
 mod perf_dotnet_data;
@@ -145,7 +144,7 @@ fn run_map_key_test(spec: Mix, num_start_items : usize) {
         measurements.push(perf_map::run_workload(&"scc u64", scc1, &config, &keys1));
 
         let scc2 = Arc::new(
-            SccCollection::<keys::StrKey, u64, ahash::RandomState>::with_capacity(capacity),
+            SccCollection::<String, u64, ahash::RandomState>::with_capacity(capacity),
         );
         measurements.push(perf_map::run_workload(&"scc str", scc2, &config, &keys2));
 
@@ -154,7 +153,7 @@ fn run_map_key_test(spec: Mix, num_start_items : usize) {
         measurements.push(perf_map::run_workload(&"bfix u64", bfix1, &config, &keys1));
 
         let bfix2 = Arc::new(
-            BFixCollection::<keys::StrKey, u64, ahash::RandomState>::with_capacity(capacity),
+            BFixCollection::<String, u64, ahash::RandomState>::with_capacity(capacity),
         );
         measurements.push(perf_map::run_workload(&"bfix str", bfix2, &config, &keys2));
     }

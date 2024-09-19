@@ -28,7 +28,7 @@ pub trait Collection: Send + Sync + 'static {
 /// free to use the same value for all operations, or use distinct ones and check that your
 /// retrievals indeed return the right results.
 pub trait CollectionHandle {
-    type Key: From<u64> + Clone + Send + Sync;
+    type Key: Clone + Send + Sync + FromU64;
 
     fn get(&self, key: &Self::Key) -> bool;
     fn insert(&self, key: Self::Key) -> bool;
@@ -36,15 +36,51 @@ pub trait CollectionHandle {
     fn update(&self, key: &Self::Key) -> bool;
 }
 
+pub trait ValueModifier {
+    fn modify(&mut self);
+}
+
+impl ValueModifier for u64 {
+    fn modify(&mut self) {
+        *self += 1;
+    }
+}
+
+impl ValueModifier for String {
+    fn modify(&mut self) {
+        self.push_str("X"); 
+    }
+}
+
+// Define the FromU64 trait 
+pub trait FromU64 {
+    fn from_u64(value: u64) -> Self;
+}
+
+// Implement FromU64 for u64 (trivial conversion)
+impl FromU64 for u64 {
+    fn from_u64(value: u64) -> Self {
+        value
+    }
+}
+
+// Implement FromU64 for String (convert u64 to hexadecimal string)
+impl FromU64 for String {
+    fn from_u64(value: u64) -> Self {
+        format!("{:x}", value)
+    }
+}
+
+
 #[derive(Clone)] // Allow cloning if needed
-pub struct Keys<TK: From<u64> + Clone + Send + Sync> {
+pub struct Keys<TK: Clone + Send + Sync + FromU64> {
     allocated: Arc<AtomicUsize>,
     keys: Vec<TK>,
 }
 
 impl<TK> Keys<TK>
 where
-    TK: Send + Sync + From<u64> + Clone,
+    TK: Send + Sync + Clone+ FromU64,
 {
     pub fn new(total_keys: usize) -> Self {
         let mut rng = rand::thread_rng();
@@ -56,7 +92,7 @@ where
 
         Self {
             allocated: Arc::new(AtomicUsize::new(0)),
-            keys: unique_set.into_iter().map(TK::from).collect(),
+            keys: unique_set.into_iter().map(TK::from_u64).collect(),
         }
     }
 
