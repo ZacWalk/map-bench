@@ -71,8 +71,8 @@ fn run_fetch_add_test() {
     let num_cpus = perf_mem::get_num_cpus();
 
     for i in 1..num_cpus + 1 {
-        let mesurment = perf_mem::run_fetch_add_test("fetch_add", i);
-        measurements.push(mesurment);
+        measurements.push(perf_mem::run_fetch_add_test("global", i));
+        measurements.push(perf_mem::run_numa_fetch_add_test("numa", i));
     }
 
     write_plot(
@@ -213,7 +213,8 @@ pub fn write_plot(
     color_map.insert("normal", RED);
     color_map.insert("numa match", GREEN);
     color_map.insert("numa miss", BLUE);
-    color_map.insert("fetch_add", RED);
+    color_map.insert("global", RED);
+    color_map.insert("numa", BLUE);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);

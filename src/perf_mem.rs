@@ -1,5 +1,6 @@
 use rand::Rng;
 use std::ffi::OsString;
+use std::mem::transmute;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{self, null_mut};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -156,6 +157,7 @@ pub(crate) enum AffinityType {
     NumaMismatch,
 }
 
+
 pub(crate) fn run_memory_access_test(
     name: &str,
     thread_count: usize,
@@ -296,9 +298,9 @@ pub(crate) fn run_fetch_add_test(
     name: &str,
     thread_count: usize,
 ) -> perf::Measurement {
-    const INCREMENT_COUNT: u64 = 100_000_000;
+    const INCREMENT_COUNT: u64 = 10_000_000;
 
-    print!("CAS (threads {thread_count:>3}) ... ");
+    print!("fetch_add global (threads {thread_count:>3}) ... ");
 
     let atomic_counter = Arc::new(AtomicU64::new(0));
     let barrier = Arc::new(Barrier::new(thread_count + 1));
@@ -347,6 +349,106 @@ pub(crate) fn run_fetch_add_test(
     perf::Measurement {
         name,
         latency: average_duration as u64, 
+        thread_count: thread_count as u64,
+    }
+}
+
+
+fn allocate_atomic_u64_on_numa_nodes(num_numa_nodes: usize) -> Vec<*mut AtomicU64> {
+    (0..num_numa_nodes)
+        .map(|numa_node| {
+            let ptr = unsafe {
+                VirtualAllocExNuma(
+                    GetCurrentProcess(),
+                    ptr::null_mut(),
+                    std::mem::size_of::<AtomicU64>(),
+                    MEM_COMMIT | MEM_RESERVE,
+                    PAGE_READWRITE,
+                    numa_node as u32,
+                )
+            };
+
+            if ptr.is_null() {
+                panic!("Failed to allocate memory on NUMA node {}", numa_node);
+            }
+
+            let atomic_u64_ptr = ptr as *mut AtomicU64;
+            unsafe { (*atomic_u64_ptr).store(0, Ordering::Relaxed); } // Initialize to 0
+
+            atomic_u64_ptr
+        })
+        .collect()
+}
+
+pub(crate) fn run_numa_fetch_add_test(
+    name: &str,
+    thread_count: usize,
+) -> perf::Measurement {
+    const INCREMENT_COUNT: u64 = 10_000_000;
+
+    print!("fetch_add numa (threads {thread_count:>3}) ... ");
+
+    let core_info = get_core_info().expect("Failed to get core IDs");
+
+    // Allocate an atomic counter per NUMA node
+    let atomic_counters = allocate_atomic_u64_on_numa_nodes(core_info.num_numa_nodes);
+
+    let barrier = Arc::new(Barrier::new(thread_count + 1));
+    let results = Arc::new(Mutex::new(Vec::<u128>::new()));
+
+    let mut handles = vec![];
+    for thread_index in 0..thread_count {
+        let core_id = core_info.ids[thread_index % core_info.ids.len()];
+        let numa_node = core_id.numa_node_num as usize;
+        let counter_as_usize  = unsafe { transmute::<*mut AtomicU64, usize>(atomic_counters[numa_node]) }; 
+        let barrier = barrier.clone();
+        let results_clone = Arc::clone(&results);
+
+        let handle = thread::spawn(move || {
+            set_thread_affinity(&core_id).expect("Failed to set thread affinity"); 
+            let counter_ptr = unsafe { transmute::<usize, *mut AtomicU64>(counter_as_usize) };
+
+            barrier.wait();
+
+            let start_time = Instant::now();
+
+            loop {
+                let current_value = (unsafe { &*counter_ptr }).fetch_add(1, Ordering::SeqCst); 
+                if current_value >= INCREMENT_COUNT - 1 {
+                    let duration = start_time.elapsed();
+                    let mut results = results_clone.lock().unwrap();
+                    results.push(duration.as_nanos());
+                    break;
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    barrier.wait();
+
+    // Wait for all threads to finish
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let mut counter_total = 0;
+
+    // Calculate statistics (ensure all counters reached the target)
+    for counter in &atomic_counters {
+        counter_total += unsafe { (**counter).load(Ordering::SeqCst) }; 
+    }
+
+    let results = results.lock().unwrap();
+    let total_duration: u128 = results.iter().sum();
+    let average_duration = total_duration / counter_total as u128;
+
+    println!("avg: {} ns", average_duration);
+
+    perf::Measurement {
+        name,
+        latency: average_duration as u64,
         thread_count: thread_count as u64,
     }
 }
