@@ -2,6 +2,7 @@ use rand::Rng;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{self, null_mut};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -286,6 +287,66 @@ pub(crate) fn run_memory_access_test(
     perf::Measurement {
         name,
         latency,
+        thread_count: thread_count as u64,
+    }
+}
+
+
+pub(crate) fn run_fetch_add_test(
+    name: &str,
+    thread_count: usize,
+) -> perf::Measurement {
+    const INCREMENT_COUNT: u64 = 100_000_000;
+
+    print!("CAS (threads {thread_count:>3}) ... ");
+
+    let atomic_counter = Arc::new(AtomicU64::new(0));
+    let barrier = Arc::new(Barrier::new(thread_count + 1));
+    let results = Arc::new(Mutex::new(Vec::<u128>::new())); 
+
+    let mut handles = vec![];
+    for _ in 0..thread_count {
+        let atomic_counter_clone = Arc::clone(&atomic_counter);
+        let barrier = barrier.clone();
+        let results_clone = Arc::clone(&results);
+
+        let handle = thread::spawn(move || {
+            barrier.wait();
+
+            let start_time = Instant::now();
+
+            loop {
+                let current_value = atomic_counter_clone.fetch_add(1, Ordering::SeqCst);
+                if current_value >= INCREMENT_COUNT - 1 { 
+                    let duration = start_time.elapsed();
+                    let mut results = results_clone.lock().unwrap();
+                    results.push(duration.as_nanos());
+                    break;
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    barrier.wait();
+
+    // Wait for all threads to finish
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Calculate statistics from the results
+    let current_value = atomic_counter.load(Ordering::Acquire);
+    let results = results.lock().unwrap();
+    let total_duration: u128 = results.iter().sum();
+    let average_duration = total_duration / current_value as u128;
+
+    println!("avg: {} ns", average_duration);
+
+    perf::Measurement {
+        name,
+        latency: average_duration as u64, 
         thread_count: thread_count as u64,
     }
 }

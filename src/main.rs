@@ -36,6 +36,7 @@ fn main() {
     run_map_key_test(Mix::read_99(), 1_000_000);
     run_map_key_test(Mix::read_99(), 10_000);
     run_map_key_test(Mix::read_100(), 100_000);
+    run_fetch_add_test();
     run_memory_read_write_test();
 }
 
@@ -60,10 +61,29 @@ fn run_memory_read_write_test() {
         &measurements,
         "Memory Reads and Writes",
         "Average",
-        "read-write.svg",
+        "memory-read-write.svg",
     )
     .expect("failed to plot");
 }
+
+fn run_fetch_add_test() {
+    let mut measurements = Vec::new();
+    let num_cpus = perf_mem::get_num_cpus();
+
+    for i in 1..num_cpus + 1 {
+        let mesurment = perf_mem::run_fetch_add_test("fetch_add", i);
+        measurements.push(mesurment);
+    }
+
+    write_plot(
+        &measurements,
+        "Fetch-Add Memory Increment",
+        "Average",
+        "memory-fetch-add.svg",
+    )
+    .expect("failed to plot");
+}
+
 
 fn run_map_op_test(spec: Mix, num_start_items : usize, dot_net : &Vec<Measurement>) {
     let operations = spec.to_ops();    
@@ -193,6 +213,7 @@ pub fn write_plot(
     color_map.insert("normal", RED);
     color_map.insert("numa match", GREEN);
     color_map.insert("numa miss", BLUE);
+    color_map.insert("fetch_add", RED);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);
