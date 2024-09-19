@@ -36,6 +36,7 @@ fn main() {
     run_map_op_test(Mix::read_99(), 10_000, &PERF_DATA_DOT_NET_99_10k);
     run_map_key_test(Mix::read_99(), 1_000_000);
     run_map_key_test(Mix::read_99(), 10_000);
+    run_map_key_test(Mix::read_100(), 100_000);
     run_memory_read_write_test();
 }
 

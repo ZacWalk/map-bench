@@ -71,7 +71,7 @@ where
     type Key = K;
 
     fn get(&self, key: &Self::Key) -> bool {
-        self.0.read(&key, |_, v| v.clone()).is_some()
+        self.0.read(&key, |_, _| Some(1)).is_some()
     }
 
     fn insert(&self, key: Self::Key) -> bool {

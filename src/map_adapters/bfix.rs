@@ -144,7 +144,7 @@ where
     type Key = K;
 
     fn get(&self, key: &Self::Key) -> bool {
-        self.0.get(&key, |v| v.clone()).is_some()
+        self.0.get(&key, |_| Some(1)).is_some()
     }
 
     fn insert(&self, key: Self::Key) -> bool {
