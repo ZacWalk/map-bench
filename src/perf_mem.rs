@@ -1,4 +1,5 @@
 use rand::Rng;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::mem::transmute;
 use std::os::windows::ffi::OsStringExt;
@@ -54,6 +55,30 @@ fn set_thread_affinity(core: &CoreId) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// distribute the ordering of CoreId evenly over the numa nodes
+fn distribute_numa_cores(core_ids: Vec<CoreId>) -> Vec<CoreId> {
+    let mut cores_by_numa = BTreeMap::<u32, Vec<CoreId>>::new();
+    let mut rearranged_core_ids = Vec::new();
+    let mut core_ids_copy = core_ids.clone(); // Clone core_ids
+
+    for core_id in &core_ids { 
+        cores_by_numa
+            .entry(core_id.numa_node_num)
+            .or_insert(Vec::new())
+            .push(core_id.clone());
+    }
+
+    while rearranged_core_ids.len() < core_ids.len() {
+        for (_n, v) in cores_by_numa.iter_mut() {
+            if let Some(c) = core_ids_copy.pop() {
+                rearranged_core_ids.push(c);
+            }
+        }
+    }
+
+    rearranged_core_ids
 }
 
 pub fn get_num_cpus() -> usize {
@@ -144,7 +169,7 @@ fn get_core_info() -> Result<CoreInfo, String> {
     }
 
     Ok(CoreInfo {
-        ids: core_infos,
+        ids: distribute_numa_cores(core_infos),
         num_numa_nodes: numa_node_set.len(),
     })
 }
