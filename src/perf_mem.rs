@@ -29,18 +29,25 @@ use crate::perf_info::{get_last_error_message, GetLogicalProcessorInformationEx}
 #[derive(Copy, Clone)]
 struct CoreId {
     processor_group: u16,
-    processor_mask: usize,
+    numa_mask: usize,
+    core_mask: usize,
     numa_node_num: u32,
 }
 
-fn set_thread_affinity(core: &CoreId) -> Result<(), String> {
+fn set_thread_affinity(core: &CoreId, numa_affinity: bool) -> Result<(), String> {
     let current_thread: HANDLE = unsafe { GetCurrentThread() };
     if current_thread.is_null() {
         return Err("Failed to get current thread handle".to_string());
     }
 
+    let mask = if numa_affinity {
+        core.numa_mask
+    } else {
+        core.core_mask
+    };
+
     let mut group_mask: GROUP_AFFINITY = unsafe { std::mem::zeroed() };
-    group_mask.Mask = core.processor_mask;
+    group_mask.Mask = mask;
     group_mask.Group = core.processor_group;
 
     let result = unsafe { SetThreadGroupAffinity(current_thread, &group_mask, ptr::null_mut()) };
@@ -48,7 +55,7 @@ fn set_thread_affinity(core: &CoreId) -> Result<(), String> {
     if result == 0 {
         return Err(format!(
             "Failed to set thread affinity for core {:X}:{:X}: {}",
-            core.processor_mask,
+            mask,
             core.processor_group,
             get_last_error_message(),
         ));
@@ -61,9 +68,8 @@ fn set_thread_affinity(core: &CoreId) -> Result<(), String> {
 fn distribute_numa_cores(core_ids: Vec<CoreId>) -> Vec<CoreId> {
     let mut cores_by_numa = BTreeMap::<u32, Vec<CoreId>>::new();
     let mut rearranged_core_ids = Vec::new();
-    let mut core_ids_copy = core_ids.clone(); // Clone core_ids
 
-    for core_id in &core_ids { 
+    for core_id in &core_ids {
         cores_by_numa
             .entry(core_id.numa_node_num)
             .or_insert(Vec::new())
@@ -72,7 +78,7 @@ fn distribute_numa_cores(core_ids: Vec<CoreId>) -> Vec<CoreId> {
 
     while rearranged_core_ids.len() < core_ids.len() {
         for (_n, v) in cores_by_numa.iter_mut() {
-            if let Some(c) = core_ids_copy.pop() {
+            if let Some(c) = v.pop() {
                 rearranged_core_ids.push(c);
             }
         }
@@ -155,7 +161,8 @@ fn get_core_info() -> Result<CoreInfo, String> {
                 if (processor_mask & (1 << i)) != 0 {
                     core_infos.push(CoreId {
                         processor_group,
-                        processor_mask: 1 << i,
+                        core_mask: 1 << i,
+                        numa_mask: processor_mask,
                         numa_node_num,
                     });
                 }
@@ -215,7 +222,7 @@ pub(crate) fn run_memory_access_test(
                     )
                 },
                 AffinityType::NumaNodeAffinity => {
-                    set_thread_affinity(&core_id).expect("Failed to set thread affinity");
+                    set_thread_affinity(&core_id, true).expect("Failed to set thread affinity");
                     unsafe {
                         VirtualAllocExNuma(
                             GetCurrentProcess(),
@@ -228,7 +235,7 @@ pub(crate) fn run_memory_access_test(
                     }
                 }
                 AffinityType::NumaMismatch => {
-                    set_thread_affinity(&core_id).expect("Failed to set thread affinity");
+                    set_thread_affinity(&core_id, true).expect("Failed to set thread affinity");
                     unsafe {
                         let wrong_numa_node = (core_id.numa_node_num + 1) % num_numa_nodes;
 
@@ -410,7 +417,11 @@ fn allocate_atomic_u64_on_numa_nodes(num_numa_nodes: usize) -> Vec<*mut AtomicU6
         .collect()
 }
 
-pub(crate) fn run_numa_fetch_add_test(name: &str, thread_count: usize) -> perf::Measurement {
+pub(crate) fn run_numa_fetch_add_test(
+    name: &str,
+    thread_count: usize,
+    numa_affinity: bool,
+) -> perf::Measurement {
     const INCREMENT_COUNT: u64 = 10_000_000;
 
     print!("fetch_add numa (threads {thread_count:>3}) ... ");
@@ -433,7 +444,7 @@ pub(crate) fn run_numa_fetch_add_test(name: &str, thread_count: usize) -> perf::
         let results_clone = Arc::clone(&results);
 
         let handle = thread::spawn(move || {
-            set_thread_affinity(&core_id).expect("Failed to set thread affinity");
+            set_thread_affinity(&core_id, numa_affinity).expect("Failed to set thread affinity");
             let counter_ptr = unsafe { transmute::<usize, *mut AtomicU64>(counter_as_usize) };
 
             barrier.wait();

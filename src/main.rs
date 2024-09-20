@@ -72,7 +72,8 @@ fn run_fetch_add_test() {
 
     for i in 1..num_cpus + 1 {
         measurements.push(perf_mem::run_fetch_add_test("global", i));
-        measurements.push(perf_mem::run_numa_fetch_add_test("numa", i));
+        measurements.push(perf_mem::run_numa_fetch_add_test("numa", i, true));
+        measurements.push(perf_mem::run_numa_fetch_add_test("core", i, false));
     }
 
     write_plot(
@@ -215,6 +216,7 @@ pub fn write_plot(
     color_map.insert("numa miss", BLUE);
     color_map.insert("global", RED);
     color_map.insert("numa", BLUE);
+    color_map.insert("core", MAGENTA);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);
