@@ -4,6 +4,7 @@ use perf_dotnet_data::PERF_DATA_DOT_NET_100_10K;
 use perf_dotnet_data::PERF_DATA_DOT_NET_100_1M;
 use perf_dotnet_data::PERF_DATA_DOT_NET_99_1M;
 use perf_map::{Keys, Mix, RunConfig};
+use perf_mem::get_core_info;
 use perf_mem::AffinityType;
 use plotters::prelude::SVGBackend;
 use plotters::prelude::*;
@@ -41,46 +42,106 @@ fn main() {
 }
 
 fn run_memory_read_write_test() {
-    let mut measurements = Vec::new();
+    let mut measurements1 = Vec::new();
+    let mut measurements2 = Vec::new();
+    let mut measurements3 = Vec::new();
+    let mut measurements4 = Vec::new();
+    let mut measurements5 = Vec::new();
     let num_cpus = perf_mem::get_num_cpus();
 
+    const BIG_BLOCK_SIZE: usize = 8 * 1024 * 1024;
+    const SMALL_BLOCK_SIZE: usize = 64 * 1024;
+
     for i in 1..num_cpus + 1 {
-        let mesurment = perf_mem::run_memory_access_test("normal", i, AffinityType::NoAffinity);
-        measurements.push(mesurment);
-    }
-    for i in 1..num_cpus + 1 {
-        let mesurment = perf_mem::run_memory_access_test("numa match", i, AffinityType::NumaNodeAffinity);
-        measurements.push(mesurment);
-    }
-    for i in 1..num_cpus + 1 {
-        let mesurment = perf_mem::run_memory_access_test("numa miss", i, AffinityType::NumaMismatch);
-        measurements.push(mesurment);
+        measurements1.push(perf_mem::run_memory_access_test("normal", i, AffinityType::NoAffinity, false, BIG_BLOCK_SIZE));    
+        measurements1.push(perf_mem::run_memory_access_test("numa match", i, AffinityType::NumaNodeAffinity, false, BIG_BLOCK_SIZE));
+        measurements1.push(perf_mem::run_memory_access_test("numa miss", i, AffinityType::NumaMismatch, false, BIG_BLOCK_SIZE));
+
+        measurements2.push(perf_mem::run_memory_access_test("normal", i, AffinityType::NoAffinity, true, BIG_BLOCK_SIZE));    
+        measurements2.push(perf_mem::run_memory_access_test("numa match", i, AffinityType::NumaNodeAffinity, true, BIG_BLOCK_SIZE));
+        measurements2.push(perf_mem::run_memory_access_test("numa miss", i, AffinityType::NumaMismatch, true, BIG_BLOCK_SIZE));
+
+        measurements3.push(perf_mem::run_memory_access_test("normal", i, AffinityType::NoAffinity, false, SMALL_BLOCK_SIZE));    
+        measurements3.push(perf_mem::run_memory_access_test("numa match", i, AffinityType::NumaNodeAffinity, false, SMALL_BLOCK_SIZE));
+        measurements3.push(perf_mem::run_memory_access_test("numa miss", i, AffinityType::NumaMismatch, false, SMALL_BLOCK_SIZE));
+
+        measurements4.push(perf_mem::run_memory_access_test("normal", i, AffinityType::NoAffinity, true, SMALL_BLOCK_SIZE));    
+        measurements4.push(perf_mem::run_memory_access_test("numa match", i, AffinityType::NumaNodeAffinity, true, SMALL_BLOCK_SIZE));
+        measurements4.push(perf_mem::run_memory_access_test("numa miss", i, AffinityType::NumaMismatch, true, SMALL_BLOCK_SIZE));
+
+        measurements5.push(perf_mem::run_memory_access_test("64k", i, AffinityType::NoAffinity, false, SMALL_BLOCK_SIZE));    
+        measurements5.push(perf_mem::run_memory_access_test("8mb", i, AffinityType::NoAffinity, false, BIG_BLOCK_SIZE)); 
     }
 
     write_plot(
-        &measurements,
-        "Memory Reads and Writes",
+        &measurements1,
+        "Memory Reads and Writes (8MB blocks)",
         "Average",
-        "memory-read-write.svg",
+        "memory-8mb-read-write.svg",
+    )
+    .expect("failed to plot");
+
+    write_plot(
+        &measurements2,
+        "Memory Reads (8MB blocks)",
+        "Average",
+        "memory-8mb-read.svg",
+    )
+    .expect("failed to plot");
+
+    write_plot(
+        &measurements3,
+        "Memory Reads and Writes (64k blocks)",
+        "Average",
+        "memory-64k-read-write.svg",
+    )
+    .expect("failed to plot");
+
+    write_plot(
+        &measurements4,
+        "Memory Reads (64k blocks)",
+        "Average",
+        "memory-64k-read.svg",
+    )
+    .expect("failed to plot");
+
+    write_plot(
+        &measurements5,
+        "Memory Reads and Writes (64k vs 8mb)",
+        "Average",
+        "memory-64k-8mb.svg",
     )
     .expect("failed to plot");
 }
 
 fn run_fetch_add_test() {
-    let mut measurements = Vec::new();
+    let mut measurements1 = Vec::new();
+    let mut measurements2 = Vec::new();
     let num_cpus = perf_mem::get_num_cpus();
+    let core_info = get_core_info().expect("Failed to get core IDs");
 
     for i in 1..num_cpus + 1 {
-        measurements.push(perf_mem::run_fetch_add_test("global", i));
-        measurements.push(perf_mem::run_numa_fetch_add_test("numa", i, true));
-        measurements.push(perf_mem::run_numa_fetch_add_test("core", i, false));
+        measurements2.push(perf_mem::run_fetch_add_test("atomic", i, 1));
+        measurements2.push(perf_mem::run_mutex_test("mutex", i, 1));
+
+        measurements1.push(perf_mem::run_fetch_add_test("std alloc", i, core_info.num_numa_nodes));
+        measurements1.push(perf_mem::run_numa_fetch_add_test("numa aff", i, true));
+        measurements1.push(perf_mem::run_numa_fetch_add_test("core aff", i, false));
     }
 
     write_plot(
-        &measurements,
-        "Fetch-Add Memory Increment",
+        &measurements1,
+        "Counter per Numa node (counter per numa node)",
         "Average",
-        "memory-fetch-add.svg",
+        "memory-counter-atomic.svg",
+    )
+    .expect("failed to plot");
+
+    write_plot(
+        &measurements2,
+        "Global Counter (Mutex vs Atomic)",
+        "Average",
+        "memory-counter-mutex.svg",
     )
     .expect("failed to plot");
 }
@@ -214,9 +275,13 @@ pub fn write_plot(
     color_map.insert("normal", RED);
     color_map.insert("numa match", GREEN);
     color_map.insert("numa miss", BLUE);
-    color_map.insert("global", RED);
-    color_map.insert("numa", BLUE);
-    color_map.insert("core", MAGENTA);
+    color_map.insert("std alloc", RED);
+    color_map.insert("atomic", RED);
+    color_map.insert("numa aff", BLUE);
+    color_map.insert("mutex", BLUE);
+    color_map.insert("core aff", MAGENTA);
+    color_map.insert("64k", RED);
+    color_map.insert("8mb", BLUE);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);
@@ -280,3 +345,4 @@ pub fn write_plot(
 
     Ok(())
 }
+

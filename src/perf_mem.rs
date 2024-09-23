@@ -94,12 +94,12 @@ pub fn get_num_cpus() -> usize {
     return system_info.dwNumberOfProcessors as usize;
 }
 
-struct CoreInfo {
-    ids: Vec<CoreId>,
-    num_numa_nodes: usize,
+pub struct CoreInfo {
+    pub ids: Vec<CoreId>,
+    pub num_numa_nodes: usize,
 }
 
-fn get_core_info() -> Result<CoreInfo, String> {
+pub fn get_core_info() -> Result<CoreInfo, String> {
     // Determine buffer size needed for GetLogicalProcessorInformationEx
     let mut core_infos = Vec::new();
     let mut numa_node_set = std::collections::HashSet::new();
@@ -192,15 +192,15 @@ pub(crate) fn run_memory_access_test(
     name: &str,
     thread_count: usize,
     affinity: AffinityType,
+    read_only: bool,
+    block_size: usize,
 ) -> perf::Measurement {
-    const TEST_SECONDS: u64 = 2;
-    const BLOCK_SIZE: usize = 8 * 1024 * 1024;
-    const TEST_DURATION: Duration = Duration::from_secs(TEST_SECONDS);
+    const TEST_LOOPS: u64 = 10_000_000;
 
     print!("Mem {name:8} (threads {thread_count:>3}) ... ");
 
     let core_info = get_core_info().expect("Failed to get core IDs");
-    let results = Arc::new(Mutex::new(Vec::<(u64, u64)>::new()));
+    let results = Arc::new(Mutex::new(Vec::<Duration>::new()));
     let barrier = Arc::new(Barrier::new(thread_count + 1));
 
     let mut handles = vec![];
@@ -216,7 +216,7 @@ pub(crate) fn run_memory_access_test(
                 AffinityType::NoAffinity => unsafe {
                     VirtualAlloc(
                         null_mut(),
-                        BLOCK_SIZE,
+                        block_size,
                         MEM_COMMIT | MEM_RESERVE,
                         PAGE_READWRITE,
                     )
@@ -227,7 +227,7 @@ pub(crate) fn run_memory_access_test(
                         VirtualAllocExNuma(
                             GetCurrentProcess(),
                             ptr::null_mut(),
-                            BLOCK_SIZE,
+                            block_size,
                             winapi::um::winnt::MEM_COMMIT | winapi::um::winnt::MEM_RESERVE,
                             winapi::um::winnt::PAGE_READWRITE,
                             core_id.numa_node_num,
@@ -242,7 +242,7 @@ pub(crate) fn run_memory_access_test(
                         VirtualAllocExNuma(
                             GetCurrentProcess(),
                             ptr::null_mut(),
-                            BLOCK_SIZE,
+                            block_size,
                             winapi::um::winnt::MEM_COMMIT | winapi::um::winnt::MEM_RESERVE,
                             winapi::um::winnt::PAGE_READWRITE,
                             wrong_numa_node,
@@ -259,7 +259,7 @@ pub(crate) fn run_memory_access_test(
             let mut u64_array = unsafe {
                 std::slice::from_raw_parts_mut(
                     memory_block_ptr as *mut u64,
-                    BLOCK_SIZE / std::mem::size_of::<u64>(),
+                    block_size / std::mem::size_of::<u64>(),
                 )
             };
 
@@ -272,19 +272,18 @@ pub(crate) fn run_memory_access_test(
             let mut reads_performed = 0;
             let mut writes_performed = 0;
 
-            while start_time.elapsed() < TEST_DURATION {
-                // 50% chance of read, 50% chance of write
-                if rng.gen_bool(0.5) {
-                    // Read
-                    let random_index = rng.gen_range(0..u64_array.len()) as usize;
-                    let value = u64_array[random_index];
-                    std::hint::black_box(value);
-                    reads_performed += 1;
-                } else {
+            for _ in 0..TEST_LOOPS {
+                let random_index = rng.gen_range(0..u64_array.len()) as usize;
+
+                // Read
+                let value = u64_array[random_index];
+                std::hint::black_box(value);
+                reads_performed += 1;
+
+                if !read_only {
                     // Write
-                    let random_index = rng.gen_range(0..u64_array.len()) as usize;
-                    let new_value: u64 = rng.gen();
-                    u64_array[random_index] = new_value;
+                    let random_index2 = rng.gen_range(0..u64_array.len()) as usize;
+                    u64_array[random_index2] = writes_performed;
                     writes_performed += 1;
                 }
             }
@@ -294,8 +293,10 @@ pub(crate) fn run_memory_access_test(
                 VirtualFree(memory_block_ptr, 0, winapi::um::winnt::MEM_RELEASE);
             }
 
+            let elapsed = start_time.elapsed();
+
             let mut results = results_clone.lock().unwrap();
-            results.push((reads_performed, writes_performed));
+            results.push(elapsed);
         });
 
         handles.push(handle);
@@ -312,27 +313,29 @@ pub(crate) fn run_memory_access_test(
     const NANOS_IN_1_SEC: u64 = 1_000_000_000u64;
 
     let results = results.lock().unwrap();
-    let total_reads: u64 = results.iter().map(|m| m.0).sum();
-    let total_writes: u64 = results.iter().map(|m| m.1).sum();
-    let latency =
-        (NANOS_IN_1_SEC * TEST_SECONDS * thread_count as u64) / (total_reads + total_writes);
+    let total_latency = results.iter().map(|m| m.as_secs_f64()).sum::<f64>();
+    let op_count = results.len() as f64 * TEST_LOOPS  as f64 * if read_only { 1.0 } else { 2.0 };
+    let latency = NANOS_IN_1_SEC as f64 * total_latency / op_count as f64;
 
     println!("avg: {} ns", latency);
 
     perf::Measurement {
         name,
-        latency,
+        latency : latency as u64,
         thread_count: thread_count as u64,
     }
 }
 
-pub(crate) fn run_fetch_add_test(name: &str, thread_count: usize) -> perf::Measurement {
+pub(crate) fn run_fetch_add_test(
+    name: &str,
+    thread_count: usize,
+    counter_count: usize,
+) -> perf::Measurement {
     const INCREMENT_COUNT: u64 = 10_000_000;
 
     print!("fetch_add global (threads {thread_count:>3}) ... ");
 
-    let core_info = get_core_info().expect("Failed to get core IDs");
-    let atomic_counters: Vec<Arc<AtomicU64>> = (0..core_info.num_numa_nodes)
+    let atomic_counters: Vec<Arc<AtomicU64>> = (0..counter_count)
         .map(|_| Arc::new(AtomicU64::new(0)))
         .collect();
 
@@ -375,6 +378,78 @@ pub(crate) fn run_fetch_add_test(name: &str, thread_count: usize) -> perf::Measu
     let counter_total: u64 = atomic_counters
         .iter()
         .map(|counter| counter.load(Ordering::SeqCst))
+        .sum();
+    let results = results.lock().unwrap();
+    let total_duration: u128 = results.iter().sum();
+    let average_duration = total_duration / counter_total as u128;
+
+    println!("avg: {} ns", average_duration);
+
+    perf::Measurement {
+        name,
+        latency: average_duration as u64,
+        thread_count: thread_count as u64,
+    }
+}
+
+pub(crate) fn run_mutex_test(
+    name: &str,
+    thread_count: usize,
+    counter_count: usize,
+) -> perf::Measurement {
+    const INCREMENT_COUNT: u64 = 10_000_000;
+
+    print!("mutex counter (threads {thread_count:>3}) ... ");
+
+    // Use a Vec of mutexes instead of atomics
+    let mutex_counters: Vec<Arc<Mutex<u64>>> = (0..counter_count)
+        .map(|_| Arc::new(Mutex::new(0)))
+        .collect();
+
+    let barrier = Arc::new(Barrier::new(thread_count + 1));
+    let results = Arc::new(Mutex::new(Vec::<u128>::new()));
+
+    let mut handles = vec![];
+    for i in 0..thread_count {
+        let mutex_counter_clone = Arc::clone(&mutex_counters[i % mutex_counters.len()]);
+        let barrier = barrier.clone();
+        let results_clone = Arc::clone(&results);
+
+        let handle = thread::spawn(move || {
+            barrier.wait();
+
+            let start_time = Instant::now();
+
+            loop {
+                // Acquire the mutex lock to modify the counter
+                let mut counter = mutex_counter_clone.lock().unwrap();
+                *counter += 1; // Increment the counter
+                let current_value = *counter;
+
+                if current_value >= INCREMENT_COUNT {
+                    let duration = start_time.elapsed();
+                    let mut results = results_clone.lock().unwrap();
+                    results.push(duration.as_nanos());
+                    break;
+                }
+                // The lock is automatically released when `counter` goes out of scope
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    barrier.wait();
+
+    // Wait for all threads to finish
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Calculate statistics from the results
+    let counter_total: u64 = mutex_counters
+        .iter()
+        .map(|counter| *counter.lock().unwrap())
         .sum();
     let results = results.lock().unwrap();
     let total_duration: u128 = results.iter().sum();
