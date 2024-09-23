@@ -2,13 +2,16 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::HashSet;
+use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Barrier,
 };
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
+use crate::perf::calc_av_nanos;
 use crate::perf::Measurement;
 
 /// A collection that can be benchmarked by bustle.
@@ -243,7 +246,7 @@ pub fn run_workload<'a, H: Collection>(
     let barrier = Arc::new(Barrier::new(num_threads + 1));
     let mut thread_handles = Vec::with_capacity(num_threads);
     let ops_per_thread = config.total_ops / num_threads;
-    let total_milliseconds = Arc::new(AtomicUsize::new(0));
+    let results = Arc::new(Mutex::new(Vec::<Duration>::new()));
 
     keys.reset();
     let mut new_keys = keys.alloc_n(config.prefill).iter().cycle();
@@ -261,7 +264,7 @@ pub fn run_workload<'a, H: Collection>(
         let operations = config.operations.clone();
         let keys_needed_per_thread = config.keys_needed_per_thread;
         let barrier = barrier.clone();
-        let total_milliseconds = total_milliseconds.clone();
+        let results_clone = results.clone();
         let collection = collection.clone();
         let keys = keys.clone();
         // affinity: let core_id = core_ids[n % core_ids.len()];
@@ -271,7 +274,7 @@ pub fn run_workload<'a, H: Collection>(
             // affinity: set_thread_affinity(&[core_id_usize]).expect("Failed to set thread affinity");
             let dict = collection.pin();
             barrier.wait();
-            let start = Instant::now();
+            let start_time = Instant::now();
             run_ops(
                 &dict,
                 &keys,
@@ -279,8 +282,10 @@ pub fn run_workload<'a, H: Collection>(
                 ops_per_thread,
                 keys_needed_per_thread
             );
-            let elapsed_ms = start.elapsed().as_millis() as usize;
-            total_milliseconds.fetch_add(elapsed_ms, Ordering::Relaxed);
+            
+            let elapsed = start_time.elapsed();
+            let mut results = results_clone.lock().unwrap();
+            results.push(elapsed);
         });
 
         thread_handles.push(handle);
@@ -291,15 +296,15 @@ pub fn run_workload<'a, H: Collection>(
         handle.join().unwrap();
     }
 
-    let total_milliseconds = total_milliseconds.load(Ordering::Relaxed);
-    let real_total_ops = ops_per_thread * num_threads;
-    let avg_latency = (total_milliseconds * 1_000_000) / real_total_ops;
+    
+    let real_total_ops = ops_per_thread as u64 * num_threads as u64;
+    let average_duration = calc_av_nanos(results, real_total_ops);
 
-    println!("avg: {:>3} ns", avg_latency);
+    println!("avg: {:8.2} ns", average_duration);
 
     Measurement {
         name,
-        latency: avg_latency as u64,
+        latency: average_duration,
         thread_count: num_threads as u64,
     }
 }

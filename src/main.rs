@@ -294,10 +294,10 @@ pub fn write_plot(
     root.fill(&WHITE)?;
 
     
-    let y_min = records.iter().map(|m| m.latency).min().unwrap();
-    let y_max = records.iter().map(|m| m.latency).max().unwrap();
+    let y_min = records.iter().map(|m| m.latency).fold(f64::INFINITY, f64::min);
+    let y_max = records.iter().map(|m| m.latency).fold(f64::NEG_INFINITY, f64::max);
     let y_diff = y_max - y_min;
-    let y_padding = (y_diff / 10).min(y_min);
+    let y_padding = (y_diff / 10.0).min(y_min);
 
     let x_min = records.iter().map(|m| m.thread_count).min().unwrap();
     let x_max = records.iter().map(|m| m.thread_count).max().unwrap();

@@ -23,7 +23,7 @@ use winapi::um::winnt::{
     PAGE_READWRITE, SYSTEM_LOGICAL_PROCESSOR_INFORMATION, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
 };
 
-use crate::perf;
+use crate::perf::{self, calc_av_nanos};
 use crate::perf_info::{get_last_error_message, GetLogicalProcessorInformationEx};
 
 #[derive(Copy, Clone)]
@@ -288,12 +288,12 @@ pub(crate) fn run_memory_access_test(
                 }
             }
 
+            let elapsed = start_time.elapsed();
+
             // Free the allocated memory for this thread
             unsafe {
                 VirtualFree(memory_block_ptr, 0, winapi::um::winnt::MEM_RELEASE);
             }
-
-            let elapsed = start_time.elapsed();
 
             let mut results = results_clone.lock().unwrap();
             results.push(elapsed);
@@ -310,18 +310,14 @@ pub(crate) fn run_memory_access_test(
     }
 
     // Calculate averages
-    const NANOS_IN_1_SEC: u64 = 1_000_000_000u64;
+    let op_count = thread_count as u64 * TEST_LOOPS * if read_only { 1 } else { 2 };
+    let average_duration = calc_av_nanos(results, op_count);
 
-    let results = results.lock().unwrap();
-    let total_latency = results.iter().map(|m| m.as_secs_f64()).sum::<f64>();
-    let op_count = results.len() as f64 * TEST_LOOPS  as f64 * if read_only { 1.0 } else { 2.0 };
-    let latency = NANOS_IN_1_SEC as f64 * total_latency / op_count as f64;
-
-    println!("avg: {} ns", latency);
+    println!("avg: {:8.2} ns", average_duration);
 
     perf::Measurement {
         name,
-        latency : latency as u64,
+        latency: average_duration,
         thread_count: thread_count as u64,
     }
 }
@@ -340,7 +336,7 @@ pub(crate) fn run_fetch_add_test(
         .collect();
 
     let barrier = Arc::new(Barrier::new(thread_count + 1));
-    let results = Arc::new(Mutex::new(Vec::<u128>::new()));
+    let results = Arc::new(Mutex::new(Vec::<Duration>::new()));
 
     let mut handles = vec![];
     for i in 0..thread_count {
@@ -358,7 +354,7 @@ pub(crate) fn run_fetch_add_test(
                 if current_value >= INCREMENT_COUNT - 1 {
                     let duration = start_time.elapsed();
                     let mut results = results_clone.lock().unwrap();
-                    results.push(duration.as_nanos());
+                    results.push(duration);
                     break;
                 }
             }
@@ -375,19 +371,18 @@ pub(crate) fn run_fetch_add_test(
     }
 
     // Calculate statistics from the results
-    let counter_total: u64 = atomic_counters
+    let op_count: u64 = atomic_counters
         .iter()
-        .map(|counter| counter.load(Ordering::SeqCst))
+        .map(|counter| unsafe { (**counter).load(Ordering::SeqCst) })
         .sum();
-    let results = results.lock().unwrap();
-    let total_duration: u128 = results.iter().sum();
-    let average_duration = total_duration / counter_total as u128;
 
-    println!("avg: {} ns", average_duration);
+    let average_duration = calc_av_nanos(results, op_count);
+
+    println!("avg: {:8.2} ns", average_duration);
 
     perf::Measurement {
         name,
-        latency: average_duration as u64,
+        latency: average_duration,
         thread_count: thread_count as u64,
     }
 }
@@ -407,7 +402,7 @@ pub(crate) fn run_mutex_test(
         .collect();
 
     let barrier = Arc::new(Barrier::new(thread_count + 1));
-    let results = Arc::new(Mutex::new(Vec::<u128>::new()));
+    let results = Arc::new(Mutex::new(Vec::<Duration>::new()));
 
     let mut handles = vec![];
     for i in 0..thread_count {
@@ -429,7 +424,7 @@ pub(crate) fn run_mutex_test(
                 if current_value >= INCREMENT_COUNT {
                     let duration = start_time.elapsed();
                     let mut results = results_clone.lock().unwrap();
-                    results.push(duration.as_nanos());
+                    results.push(duration);
                     break;
                 }
                 // The lock is automatically released when `counter` goes out of scope
@@ -451,15 +446,13 @@ pub(crate) fn run_mutex_test(
         .iter()
         .map(|counter| *counter.lock().unwrap())
         .sum();
-    let results = results.lock().unwrap();
-    let total_duration: u128 = results.iter().sum();
-    let average_duration = total_duration / counter_total as u128;
+    let average_duration = calc_av_nanos(results, counter_total);
 
-    println!("avg: {} ns", average_duration);
+    println!("avg: {:8.2} ns", average_duration);
 
     perf::Measurement {
         name,
-        latency: average_duration as u64,
+        latency: average_duration,
         thread_count: thread_count as u64,
     }
 }
@@ -507,7 +500,7 @@ pub(crate) fn run_numa_fetch_add_test(
     let atomic_counters = allocate_atomic_u64_on_numa_nodes(core_info.num_numa_nodes);
 
     let barrier = Arc::new(Barrier::new(thread_count + 1));
-    let results = Arc::new(Mutex::new(Vec::<u128>::new()));
+    let results = Arc::new(Mutex::new(Vec::<Duration>::new()));
 
     let mut handles = vec![];
     for thread_index in 0..thread_count {
@@ -531,7 +524,7 @@ pub(crate) fn run_numa_fetch_add_test(
                 if current_value >= INCREMENT_COUNT - 1 {
                     let duration = start_time.elapsed();
                     let mut results = results_clone.lock().unwrap();
-                    results.push(duration.as_nanos());
+                    results.push(duration);
                     break;
                 }
             }
@@ -552,15 +545,14 @@ pub(crate) fn run_numa_fetch_add_test(
         .map(|counter| unsafe { (**counter).load(Ordering::SeqCst) })
         .sum();
 
-    let results = results.lock().unwrap();
-    let total_duration: u128 = results.iter().sum();
-    let average_duration = total_duration / counter_total as u128;
+    let average_duration = calc_av_nanos(results, counter_total);
 
-    println!("avg: {} ns", average_duration);
+    println!("avg: {:8.2} ns", average_duration);
 
     perf::Measurement {
         name,
-        latency: average_duration as u64,
+        latency: average_duration,
         thread_count: thread_count as u64,
     }
 }
+
