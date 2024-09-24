@@ -188,7 +188,7 @@ pub(crate) enum AffinityType {
     NumaMismatch,
 }
 
-pub(crate) fn run_memory_access_test(
+pub(crate) fn run_independent_memory_access_test(
     name: &str,
     thread_count: usize,
     affinity: AffinityType,

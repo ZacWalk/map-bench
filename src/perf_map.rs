@@ -51,11 +51,11 @@ impl ValueModifier for u64 {
 
 impl ValueModifier for String {
     fn modify(&mut self) {
-        self.push_str("X"); 
+        self.push_str("X");
     }
 }
 
-// Define the FromU64 trait 
+// Define the FromU64 trait
 pub trait FromU64 {
     fn from_u64(value: u64) -> Self;
 }
@@ -74,7 +74,6 @@ impl FromU64 for String {
     }
 }
 
-
 #[derive(Clone)] // Allow cloning if needed
 pub struct Keys<TK: Clone + Send + Sync + FromU64> {
     allocated: Arc<AtomicUsize>,
@@ -83,7 +82,7 @@ pub struct Keys<TK: Clone + Send + Sync + FromU64> {
 
 impl<TK> Keys<TK>
 where
-    TK: Send + Sync + Clone+ FromU64,
+    TK: Send + Sync + Clone + FromU64,
 {
     pub fn new(total_keys: usize) -> Self {
         let mut rng = rand::thread_rng();
@@ -114,9 +113,9 @@ where
     //     self.keys[i]
     // }
 
-    pub fn alloc_n(&self, count : usize) -> &[TK] {
+    pub fn alloc_n(&self, count: usize) -> &[TK] {
         let i = self.allocated.fetch_add(count, Ordering::Relaxed);
-        &self.keys[i..(i + count)] 
+        &self.keys[i..(i + count)]
     }
 }
 
@@ -185,19 +184,19 @@ impl Mix {
 }
 
 #[derive(Debug, Clone)] // Add these derives for convenience if needed
-pub struct RunConfig<'a> {
+pub struct SharedMapTestConfig<'a> {
     pub thread_count: usize,
     pub total_ops: usize,
-    pub prefill: usize,    
+    pub prefill: usize,
     pub operations: &'a Vec<Operation>,
-    pub keys_needed_per_thread : usize,
+    pub keys_needed_per_thread: usize,
 }
 fn run_ops<H: CollectionHandle>(
     dict: &H, // Assuming you have a ConcurrentDictionary type
     keys: &Arc<Keys<H::Key>>,
     op_mix: &[Operation],
     ops_per_thread: usize,
-    keys_needed_per_thread : usize,
+    keys_needed_per_thread: usize,
 ) -> usize {
     let mut rng = thread_rng();
     let op_mix_count = op_mix.len();
@@ -233,10 +232,10 @@ fn run_ops<H: CollectionHandle>(
     total_success
 }
 
-pub fn run_workload<'a, H: Collection>(
-    name : &'a str,
+pub fn run_shared_map_test<'a, H: Collection>(
+    name: &'a str,
     collection: Arc<H>,
-    config: &RunConfig,
+    config: &SharedMapTestConfig,
     keys: &'a Arc<Keys<<<H as Collection>::Handle as CollectionHandle>::Key>>,
 ) -> Measurement<'a> {
     let num_threads = config.thread_count;
@@ -260,7 +259,7 @@ pub fn run_workload<'a, H: Collection>(
     // uncomment for core affinity
     // affinity: let core_ids = get_core_ids().expect("Failed to get core IDs");
 
-    for _ in 0..num_threads {        
+    for _ in 0..num_threads {
         let operations = config.operations.clone();
         let keys_needed_per_thread = config.keys_needed_per_thread;
         let barrier = barrier.clone();
@@ -280,9 +279,9 @@ pub fn run_workload<'a, H: Collection>(
                 &keys,
                 &operations,
                 ops_per_thread,
-                keys_needed_per_thread
+                keys_needed_per_thread,
             );
-            
+
             let elapsed = start_time.elapsed();
             let mut results = results_clone.lock().unwrap();
             results.push(elapsed);
@@ -296,7 +295,6 @@ pub fn run_workload<'a, H: Collection>(
         handle.join().unwrap();
     }
 
-    
     let real_total_ops = ops_per_thread as u64 * num_threads as u64;
     let average_duration = calc_av_nanos(results, real_total_ops);
 
@@ -306,5 +304,50 @@ pub fn run_workload<'a, H: Collection>(
         name,
         latency: average_duration,
         thread_count: num_threads as u64,
+    }
+}
+
+pub(crate) trait MapAdapter<K, V> {
+    fn insert(&mut self, key: K, value: V);
+    fn get(&self, key: &K) -> Option<V>;
+}
+
+pub(crate) fn run_map_test<'a, M>(
+    name: &'a str,
+    op_count: usize,
+    prefill: usize,
+    map: &mut M,
+) -> Measurement<'a>
+where
+    M: MapAdapter<u64, u64>,
+{
+    print!("map test {name} ... ");
+    let mut rng = rand::thread_rng();    
+
+    // Prefill the map with random values
+    for i in 0..prefill {
+        let value = 1; //rng.gen::<u64>();
+        map.insert(i as u64, value);
+    }
+
+    let start_time = Instant::now();
+
+    // Perform read operations and measure the time
+    for i in 0..op_count {
+        let key = (i % prefill) as u64; //rng.gen_range(0..prefill as u64); // Generate keys within the prefill range
+        if let Some(value) = map.get(&key) {
+            std::hint::black_box(value.clone()); // Use clone to avoid ownership issues
+        }
+    }
+
+    let elapsed = start_time.elapsed();
+    let average_duration = elapsed.as_nanos() as f64 / op_count as f64;
+
+    println!("avg: {:8.2} ns", average_duration);
+
+    Measurement {
+        name,
+        latency: average_duration,
+        thread_count: (prefill / 1000) as u64,
     }
 }
