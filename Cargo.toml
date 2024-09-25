@@ -24,7 +24,7 @@ scc = "2.1.16"
 scopeguard = "1.2.0"
 serde = { version = "1.0.209", features = ["derive"] }
 structopt = "0.3.26"
-winapi = { version = "0.3.9", features = ["memoryapi", "processtopologyapi"] }
+winapi = { version = "0.3.9", features = ["memoryapi", "processtopologyapi","heapapi"] }
 thousands = "0.2.0"
 hashbrown = "0.14.5"
 

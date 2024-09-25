@@ -44,6 +44,7 @@ fn main() {
     run_map_test();
     run_mem_indirect_test();
     run_fetch_add_test();
+    run_heapalloc_tests();
     run_memory_read_write_test();
 }
 
@@ -58,7 +59,7 @@ fn run_memory_read_write_test() {
     const BIG_BLOCK_SIZE: usize = 8 * 1024 * 1024;
     const SMALL_BLOCK_SIZE: usize = 64 * 1024;
 
-    for i in 1..num_cpus + 1 {
+    for i in 1..=num_cpus {
         measurements1.push(perf_mem::run_independent_memory_access_test("normal", i, AffinityType::NoAffinity, false, BIG_BLOCK_SIZE));    
         measurements1.push(perf_mem::run_independent_memory_access_test("numa match", i, AffinityType::NumaNodeAffinity, false, BIG_BLOCK_SIZE));
         measurements1.push(perf_mem::run_independent_memory_access_test("numa miss", i, AffinityType::NumaMismatch, false, BIG_BLOCK_SIZE));
@@ -120,13 +121,33 @@ fn run_memory_read_write_test() {
     .expect("failed to plot");
 }
 
+fn run_heapalloc_tests()
+{
+    let mut measurements = Vec::new();
+    let num_cpus = perf_mem::get_num_cpus();
+
+    for i in 1..=num_cpus {
+        measurements.push(perf_mem::run_heapalloc_test("1 heap", i, 1));
+        measurements.push(perf_mem::run_heapalloc_test("4 heaps", i, 4));
+        measurements.push(perf_mem::run_heapalloc_test("16 heaps", i, 16));
+    }
+
+    write_plot(
+        &measurements,
+        "heap contention",
+        "Average", "Threads",
+        "memory-allocators.svg",
+    )
+    .expect("failed to plot");
+}
+
 fn run_fetch_add_test() {
     let mut measurements1 = Vec::new();
     let mut measurements2 = Vec::new();
     let num_cpus = perf_mem::get_num_cpus();
     let core_info = get_core_info().expect("Failed to get core IDs");
 
-    for i in 1..num_cpus + 1 {
+    for i in 1..=num_cpus {
         measurements2.push(perf_mem::run_fetch_add_test("atomic", i, 1));
         measurements2.push(perf_mem::run_mutex_test("mutex", i, 1));
 
@@ -481,6 +502,9 @@ pub fn write_plot(
     color_map.insert("2", GREEN);
     color_map.insert("3", RED);
     color_map.insert("4", MAGENTA);
+    color_map.insert("1 heap", BLUE);
+    color_map.insert("4 heaps", GREEN);
+    color_map.insert("16 heaps", RED);
 
     for record in records.iter() {
         let group = groups.entry(record.name).or_insert_with(Vec::new);

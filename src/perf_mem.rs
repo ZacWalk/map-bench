@@ -2,6 +2,7 @@ use rand::Rng;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::mem::transmute;
+use std::os::raw::c_void;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{self, null_mut};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,6 +23,7 @@ use winapi::um::winnt::{
     RelationNumaNode, RelationProcessorCore, GROUP_AFFINITY, HANDLE, MEM_COMMIT, MEM_RESERVE,
     PAGE_READWRITE, SYSTEM_LOGICAL_PROCESSOR_INFORMATION, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
 };
+use winapi::um::heapapi::{HeapAlloc, HeapCreate, HeapDestroy, HeapFree};
 
 use crate::perf::{self, calc_av_nanos};
 use crate::perf_info::{get_last_error_message, GetLogicalProcessorInformationEx};
@@ -556,3 +558,115 @@ pub(crate) fn run_numa_fetch_add_test(
     }
 }
 
+
+pub(crate) fn run_heapalloc_test(
+    name: &str,
+    thread_count: usize,
+    num_heaps: usize
+) -> perf::Measurement {
+    const TEST_LOOPS: u64 = 10_000;
+    const DELAY_FREE: usize = 100;
+
+    print!("HeapAlloc {name:8} (threads {thread_count:>3}, heaps {num_heaps:>2}) ... ");
+
+    let results = Arc::new(Mutex::new(Vec::<Duration>::new()));
+    let barrier = Arc::new(Barrier::new(thread_count + 1));
+
+    // Create the specified number of heaps
+    let heaps: Vec<_> = (0..num_heaps)
+        .map(|_| unsafe { HeapCreate(0, 0, 0) })
+        .collect();
+
+    let mut handles = vec![];
+    for thread_id in 0..thread_count {
+        let results_clone = Arc::clone(&results);
+        let barrier = barrier.clone();
+        let heap_index = thread_id % num_heaps;
+        let heap_handle = heaps[heap_index];
+        let heap_id: usize = heap_handle as usize; // Cast to usize
+
+        let handle = thread::spawn(move || {
+            // Assign a specific heap to this thread
+
+            let heap = heap_id as *mut c_void;
+            let start_time = Instant::now();
+            let mut writes_performed = 0;
+            let mut rng = rand::thread_rng();
+
+            // Circular buffer for allocated blocks
+            let mut allocated_blocks: [*mut c_void; DELAY_FREE] = [std::ptr::null_mut(); DELAY_FREE];
+            let mut head: usize = 0;
+            let mut tail: usize = 0;
+
+            barrier.wait();
+
+            for _ in 0..TEST_LOOPS {
+                // Allocate memory from the assigned heap
+                let block_size = rng.gen_range(16..=1024);
+                let memory_block_ptr = unsafe { HeapAlloc(heap, 0, block_size) };
+
+                if memory_block_ptr.is_null() {
+                    panic!("Failed to allocate memory");
+                }
+
+                // Write a few values to the block (adjust as needed)
+                let u32_array = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        memory_block_ptr as *mut u32,
+                        block_size / std::mem::size_of::<u32>(),
+                    )
+                };
+                u32_array[0] = writes_performed as u32;
+                writes_performed += 1;
+
+                // Add the allocated block to the circular buffer
+                allocated_blocks[tail] = memory_block_ptr;
+                tail = (tail + 1) % DELAY_FREE;
+
+                // If the buffer is full, free the oldest block
+                if head == tail {
+                    let block_to_free = allocated_blocks[head];
+                    unsafe { HeapFree(heap, 0, block_to_free) };
+                    head = (head + 1) % DELAY_FREE;
+                }
+            }
+
+            while head != tail {
+                let block_to_free = allocated_blocks[head];
+                unsafe { HeapFree(heap, 0, block_to_free) };
+                head = (head + 1) % DELAY_FREE;
+            }
+
+            let elapsed = start_time.elapsed();
+
+            let mut results = results_clone.lock().unwrap();
+            results.push(elapsed);
+        });
+
+        handles.push(handle);
+    }
+
+    barrier.wait();
+
+    // Wait for all threads to finish
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Destroy the heaps
+    for heap in heaps {
+        unsafe { HeapDestroy(heap) };
+    }
+
+    // Calculate averages
+    let op_count = thread_count as u64 * TEST_LOOPS;
+    let average_duration = calc_av_nanos(results, op_count);
+
+    println!("avg: {:8.2} ns", average_duration);
+
+    perf::Measurement {
+        name,
+        latency: average_duration,
+        thread_count: thread_count as u64,
+    }
+}
