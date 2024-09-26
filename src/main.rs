@@ -24,6 +24,7 @@ mod perf_info;
 mod perf_map;
 mod perf_mem;
 mod sfix;
+mod numa_allocator;
 
 use crate::map_adapters::*;
 
